@@ -10,7 +10,7 @@
 | Script/story LLM | Gemini (primary) → Groq → OpenRouter → local template (last resort) | Structured JSON generation; three independent LLM providers, plus a keyless deterministic template so the stage never hard-fails for lack of an API key |
 | Image generation | NVIDIA Stable Diffusion 3.5 (primary) → Pollinations (fallback, free, no key) | Free-tier friendly with a no-key last resort |
 | Voice | `edge-tts` | Free, no API key, good neural voices |
-| Captions | `openai-whisper` (or `faster-whisper`) | Word-level timestamps for karaoke captions |
+| Captions | `faster-whisper` (CPU, int8) | Word-level timestamps for karaoke captions; resumable `huggingface_hub` model download (see §7 for why not `openai-whisper`) |
 | Motion (optional) | fal.ai LTX (paid, ~$0.02/clip) → Ken Burns (ffmpeg/Pillow, free, always available) | Ken Burns is the default; fal.ai is opt-in via config |
 | Composition | `ffmpeg` (via `ffmpeg-python` / subprocess) + `Pillow` | Industry standard, scriptable, no GPU required |
 | Validation | `ffprobe` | Ground-truth media inspection: resolution, duration, audio stream presence |
@@ -154,6 +154,19 @@ documents every key with a placeholder.
 `ffmpeg`/`ffprobe`: preferred from `PATH` if present, otherwise
 `backend/utils/ffmpeg_utils.py` transparently falls back to the `static-ffmpeg`
 pip package, which fetches a static build into a user-writable cache on first
-use — no system install or admin rights required. Whisper model download
-happens lazily on first use and is cached locally. All of this is declared in
+use — no system install or admin rights required. All of this is declared in
 `README.md` setup instructions.
+
+**Why `faster-whisper`, not `openai-whisper`:** live-tested both. The original
+`openai-whisper` package downloads its model weights with a plain `urllib`
+call that has no timeout and isn't resumable — on this project's dev machine
+the download stalled part-way through and hung indefinitely (confirmed: the
+process sat at 0% CPU progress for 15+ minutes with a dead-but-open TCP
+connection). `faster-whisper` downloads the same weights via
+`huggingface_hub`, which chunks and resumes properly. Separately, the `av`
+package `faster-whisper` uses for file-path audio decoding had an ABI
+mismatch on this Python/OS combination with no compatible prebuilt wheel
+available; `caption_generator._decode_audio` sidesteps this entirely by
+shelling out to the already-resolved `ffmpeg` binary to produce a raw
+16kHz mono float32 PCM buffer and handing that array to
+`WhisperModel.transcribe()` directly, which skips `av` altogether.

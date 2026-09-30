@@ -15,16 +15,15 @@ Composition (ffmpeg/Pillow), Validation (ffprobe quality gate), and a thin
 FastAPI job-orchestration API. The Gradio frontend (Phase 6) and deployment
 scaffolding (Phase 7: Dockerfile, CI, HF Space config) are also in place.
 
-**Working right now with zero API keys** (verified live, not just mocked):
-the Intelligence stage falls back to a deterministic local template when no
-LLM key is configured, images fall back to the keyless Pollinations API, and
-voice uses `edge-tts` (no key ever required). Only the NVIDIA/Gemini/Groq
-*primary* providers and the Whisper caption stage (needs `openai-whisper` +
-`torch`, not installed by default — heavy, keyless but large) are still
-pending your keys / an explicit install. `ffmpeg`/`ffprobe` are also not
-installed on this machine — see **Requirements** below — so composition and
-the quality gate are implemented and unit-tested but not yet exercised live
-here.
+**Verified live end to end, not just mocked**: script generation
+(Gemini → Groq → OpenRouter → local template, in that order — all four
+providers live-tested, including a real Gemini 503 falling through
+correctly), images (Pollinations, keyless), voice (`edge-tts`, keyless),
+captions (`faster-whisper`, keyless — CPU, word-level timestamps), and
+composition/validation (`ffmpeg`/`ffprobe`, via the `static-ffmpeg` pip
+fallback — no admin rights needed). Pending from you: an `NVIDIA_API_KEY`
+(the PRD's primary image provider) and a `FAL_API_KEY` motion-stage
+integration (not built yet, optional — Ken Burns is the default and works).
 
 ## Requirements
 
@@ -43,9 +42,10 @@ here.
   Add `GEMINI_API_KEY` / `GROQ_API_KEY` / `NVIDIA_API_KEY` / `FAL_API_KEY` to
   `.env` whenever you have them to use the higher-quality primary providers
   instead.
-- `pip install openai-whisper torch` for real captions — large download, not
-  in the default install path above; the caption stage will otherwise be the
-  one piece needing that explicit opt-in.
+- Captions use `faster-whisper` (already in `requirements.txt`) — CPU-only,
+  no API key, downloads its model weights on first use via `huggingface_hub`
+  (resumable, unlike `openai-whisper`'s downloader, which this project
+  doesn't use for exactly that reason — see `TECH.md` §7).
 
 ## Run the frontend (Gradio)
 

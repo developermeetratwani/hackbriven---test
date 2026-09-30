@@ -44,6 +44,11 @@ def _resolve_binaries() -> tuple[str, str]:
     return _resolved_paths
 
 
+def ffmpeg_path() -> str:
+    path, _ = _resolve_binaries()
+    return path
+
+
 def run_ffmpeg(args: list[str], *, stage: str) -> None:
     ffmpeg_path, _ = _resolve_binaries()
     cmd = [ffmpeg_path, "-y", "-loglevel", "error", *args]
