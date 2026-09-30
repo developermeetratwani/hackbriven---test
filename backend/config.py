@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
 
     nvidia_api_key: str = ""
     nvidia_sd_model: str = "stabilityai/stable-diffusion-3.5-large"
