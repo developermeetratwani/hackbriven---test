@@ -51,11 +51,15 @@ uvicorn backend.api.main:app --reload &   # backend on :8000
 python frontend/app.py                    # Gradio UI, polls the backend
 ```
 
-Or bundle both into one process the way a Hugging Face Space runs it:
+Or bundle both into one process (no Docker needed) the way a Hugging Face
+Space's Gradio SDK runs it — see [`deploy/huggingface/README.md`](deploy/huggingface/README.md):
 
 ```bash
 python app.py
 ```
+
+Docker is optional, not required — it's one deployment path among several
+(see the deploy doc above for the Docker-free HF Space / plain-VM options).
 
 ## Setup
 
