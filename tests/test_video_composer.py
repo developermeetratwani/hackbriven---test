@@ -89,7 +89,7 @@ def test_build_scene_clip_passes_variant_specific_filter(mock_run_ffmpeg, tmp_pa
     args = mock_run_ffmpeg.call_args[0][0]
     vf_index = args.index("-vf")
     filter_str = args[vf_index + 1]
-    z, x, y = video_composer._ken_burns_expr(2, total_frames=round(4.0 * 25))
+    z, x, y = video_composer._ken_burns_expr(2, total_frames=round(4.0 * video_composer._FPS))
     assert f"z='{z}'" in filter_str
     assert f"x='{x}'" in filter_str
 
@@ -120,9 +120,63 @@ def test_compose_calls_ffmpeg_for_every_stage(mock_run_ffmpeg, sample_scene_asse
     assert result == job_dir / "final.mp4"
     stages_called = [call.kwargs["stage"] for call in mock_run_ffmpeg.call_args_list]
     assert any("ken_burns" in s for s in stages_called)
-    assert any("concat" in s for s in stages_called)
+    assert any("crossfade" in s for s in stages_called)  # video: crossfade, not a hard-cut concat
+    assert any("concat" in s for s in stages_called)  # audio still uses plain concat
     assert any("captions" in s for s in stages_called)
     assert any("mix" in s for s in stages_called)
+
+
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_compose_extends_non_last_clips_for_transition_overlap(mock_run_ffmpeg, sample_scene_assets: list[SceneAssets], tmp_path: Path):
+    # Each non-last clip must be rendered TRANSITION_DURATION seconds longer
+    # than its nominal scene duration, so the xfade overlap has real extra
+    # footage to consume instead of visibly cutting the scene short.
+    for asset in sample_scene_assets:
+        Path(asset.audio_path).write_bytes(b"fake")
+        Path(asset.image_path).write_bytes(b"fake")
+
+    job_dir = tmp_path / "job"
+    video_composer.compose(sample_scene_assets, job_dir)
+
+    ken_burns_calls = [c for c in mock_run_ffmpeg.call_args_list if "ken_burns" in c.kwargs["stage"]]
+    first_clip_args = ken_burns_calls[0].args[0]
+    last_clip_args = ken_burns_calls[-1].args[0]
+    first_t_index = first_clip_args.index("-t")
+    last_t_index = last_clip_args.index("-t")
+
+    expected_first = sample_scene_assets[0].duration_seconds + video_composer._TRANSITION_DURATION_SECONDS
+    expected_last = sample_scene_assets[-1].duration_seconds  # last clip: NOT extended
+
+    assert float(first_clip_args[first_t_index + 1]) == expected_first
+    assert float(last_clip_args[last_t_index + 1]) == expected_last
+
+
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_crossfade_video_offsets_by_cumulative_nominal_durations(mock_run_ffmpeg, tmp_path: Path):
+    clips = [tmp_path / f"c{i}.mp4" for i in range(3)]
+    durations = [4.0, 5.0, 3.5]
+
+    video_composer._crossfade_video(clips, durations, tmp_path / "out.mp4")
+
+    args = mock_run_ffmpeg.call_args[0][0]
+    filter_complex = args[args.index("-filter_complex") + 1]
+    # transition 1 starts at the end of clip 0 (4.0s); transition 2 starts
+    # at the end of clip 0+1 (9.0s) - both using the ORIGINAL nominal
+    # durations, not the extended render durations, so the combined output
+    # duration ends up as exactly sum(durations) with no drift.
+    assert "offset=4.0" in filter_complex
+    assert "offset=9.0" in filter_complex
+
+
+def test_crossfade_video_uses_varied_transition_styles(tmp_path: Path):
+    with patch("backend.services.video_composer.run_ffmpeg") as mock_run_ffmpeg:
+        clips = [tmp_path / f"c{i}.mp4" for i in range(4)]
+        durations = [3.0, 3.0, 3.0, 3.0]
+        video_composer._crossfade_video(clips, durations, tmp_path / "out.mp4")
+
+    filter_complex = mock_run_ffmpeg.call_args[0][0][mock_run_ffmpeg.call_args[0][0].index("-filter_complex") + 1]
+    styles_used = {style for style in video_composer._TRANSITION_STYLES if f"transition={style}" in filter_complex}
+    assert len(styles_used) >= 2  # not every transition uses the same style
 
 
 def test_compose_raises_on_empty_scenes(tmp_path: Path):
