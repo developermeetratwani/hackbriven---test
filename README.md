@@ -29,12 +29,15 @@ here.
 ## Requirements
 
 - Python 3.11+
-- `ffmpeg` and `ffprobe` on `PATH` (system install, not pip) — required for the
-  composition and validation stages; not required to run the unit test suite,
-  which mocks the subprocess boundary. Install with `choco install ffmpeg`
-  (Windows, needs an elevated/admin shell), `brew install ffmpeg` (macOS), or
-  `apt-get install ffmpeg` (Debian/Ubuntu — this is also what the `Dockerfile`
-  does automatically).
+- `ffmpeg`/`ffprobe` — needed for the composition and validation stages (not
+  for the unit test suite, which mocks the subprocess boundary). **No admin
+  rights needed**: `pip install -r requirements.txt` pulls in `static-ffmpeg`,
+  which `backend/utils/ffmpeg_utils.py` uses automatically as a fallback —
+  it downloads a static `ffmpeg`/`ffprobe` build into a user-writable cache
+  the first time either binary isn't found on `PATH`. A system install
+  (`choco install ffmpeg` from an *elevated* shell, `brew install ffmpeg`,
+  `apt-get install ffmpeg`) is only needed if you specifically want the
+  system binaries instead.
 - No API keys are required to boot the pipeline — every stage has a keyless
   fallback (local template script, Pollinations images, edge-tts voice).
   Add `GEMINI_API_KEY` / `GROQ_API_KEY` / `NVIDIA_API_KEY` / `FAL_API_KEY` to

@@ -1,20 +1,27 @@
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
 from backend.config import settings
 from backend.core.job_manager import JobManager
 from backend.core.pipeline import run as run_pipeline
 from backend.models.schemas import JobStatus
+from backend.utils.ffmpeg_utils import FfmpegNotAvailableError, _resolve_binaries
 
 pytestmark = pytest.mark.integration
 
-_FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+def _ffmpeg_available() -> bool:
+    """PATH first, static-ffmpeg fallback second - same resolution the real
+    pipeline uses, so this skip check can't disagree with reality."""
+    try:
+        _resolve_binaries()
+        return True
+    except FfmpegNotAvailableError:
+        return False
 
 
-@pytest.mark.skipif(not _FFMPEG_AVAILABLE, reason="ffmpeg/ffprobe not on PATH")
+@pytest.mark.skipif(not _ffmpeg_available(), reason="ffmpeg/ffprobe unavailable (PATH and static-ffmpeg fallback both failed)")
 def test_full_pipeline_runs_end_to_end_with_keyless_providers(tmp_path, monkeypatch):
     """Real network calls, real ffmpeg, zero API keys.
 

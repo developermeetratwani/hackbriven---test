@@ -7,7 +7,7 @@
 | Language | Python 3.11+ | Every required library (ffmpeg bindings, Whisper, edge-tts, Gradio) is Python-first |
 | Backend API | FastAPI + Uvicorn | Async-friendly, typed, auto docs, thin layer over the pipeline |
 | Frontend (later phase) | Gradio | Matches the original prototype: topic input, live stage status, video preview |
-| Script/story LLM | Gemini Flash (primary) → Groq (fallback) → local template (last resort) | Structured JSON generation; two independent free-tier providers, plus a keyless deterministic template so the stage never hard-fails for lack of an API key |
+| Script/story LLM | Gemini (primary) → Groq → OpenRouter → local template (last resort) | Structured JSON generation; three independent LLM providers, plus a keyless deterministic template so the stage never hard-fails for lack of an API key |
 | Image generation | NVIDIA Stable Diffusion 3.5 (primary) → Pollinations (fallback, free, no key) | Free-tier friendly with a no-key last resort |
 | Voice | `edge-tts` | Free, no API key, good neural voices |
 | Captions | `openai-whisper` (or `faster-whisper`) | Word-level timestamps for karaoke captions |
@@ -80,7 +80,7 @@ JobManager.create() ──► job_id, status=QUEUED
 Pipeline.run(job_id)                         (background task)
    │
    ├─ 1. INTELLIGENCE   story_engine.generate_script(topic)
-   │                     └─ Gemini ──fail──► Groq ──fail──► PipelineError
+   │                     └─ Gemini ──fail──► Groq ──fail──► OpenRouter ──fail──► local template
    │                    scene_planner.plan(script) -> list[ScenePlan]
    │
    ├─ 2. GENERATION      for each scene, in parallel-safe sequence:
@@ -151,6 +151,9 @@ documents every key with a placeholder.
 
 ## 7. External dependencies
 
-`ffmpeg` and `ffprobe` must be present on `PATH` (system dependency, not pip).
-Whisper model download happens lazily on first use and is cached locally. All of
-this is declared in `README.md` setup instructions.
+`ffmpeg`/`ffprobe`: preferred from `PATH` if present, otherwise
+`backend/utils/ffmpeg_utils.py` transparently falls back to the `static-ffmpeg`
+pip package, which fetches a static build into a user-writable cache on first
+use — no system install or admin rights required. Whisper model download
+happens lazily on first use and is cached locally. All of this is declared in
+`README.md` setup instructions.

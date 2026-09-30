@@ -7,6 +7,7 @@ edge-tts>=6.1.0
 openai-whisper>=20231117
 Pillow>=10.4.0
 ffmpeg-python>=0.2.0
+static-ffmpeg>=2.7
 python-dotenv>=1.0.0
 numpy>=1.26.0
 gradio>=4.44.0

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
 
 jobs:
@@ -15,10 +15,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (excluding heavy local-only providers)
+      - name: Install dependencies (excluding openai-whisper/torch - not needed offline)
         run: |
           pip install fastapi "uvicorn[standard]" pydantic pydantic-settings \
-            httpx python-dotenv Pillow ffmpeg-python numpy \
+            httpx python-dotenv Pillow ffmpeg-python static-ffmpeg numpy gradio \
             pytest pytest-mock pytest-asyncio
 
       - name: Run offline test suite

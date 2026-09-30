@@ -36,6 +36,9 @@ def _mock_groq_response(text: str) -> MagicMock:
     return response
 
 
+_mock_openrouter_response = _mock_groq_response  # identical OpenAI-style shape
+
+
 @patch("backend.services.story_engine.settings")
 @patch("backend.services.story_engine.httpx.Client")
 def test_generate_script_uses_gemini_when_available(mock_client_cls, mock_settings):
@@ -81,9 +84,30 @@ def test_generate_script_falls_back_to_groq_on_gemini_failure(mock_client_cls, m
 
 
 @patch("backend.services.story_engine.settings")
+@patch("backend.services.story_engine.httpx.Client")
+def test_generate_script_falls_back_to_openrouter_when_gemini_and_groq_fail(mock_client_cls, mock_settings):
+    mock_settings.gemini_api_key = ""
+    mock_settings.groq_api_key = ""
+    mock_settings.openrouter_api_key = "fake-key"
+    mock_settings.openrouter_model = "nvidia/nemotron-3-super-120b-a12b:free"
+    mock_settings.provider_timeout_seconds = 5.0
+
+    client = MagicMock()
+    client.post.return_value = _mock_openrouter_response(VALID_JSON)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    script = story_engine.generate_script("Why EVs are popular")
+
+    assert script.hook == "EVs are taking over."
+    client.post.assert_called_once()
+    assert "openrouter.ai" in client.post.call_args[0][0]
+
+
+@patch("backend.services.story_engine.settings")
 def test_generate_script_falls_back_to_local_template_with_no_keys(mock_settings):
     mock_settings.gemini_api_key = ""
     mock_settings.groq_api_key = ""
+    mock_settings.openrouter_api_key = ""
 
     script = story_engine.generate_script("Why EVs are popular")
 

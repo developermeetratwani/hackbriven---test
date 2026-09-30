@@ -104,6 +104,29 @@ def _call_groq(topic: str) -> Script:
     return _parse_script(topic, raw_text)
 
 
+def _call_openrouter(topic: str) -> Script:
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY not configured")
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
+    payload = {
+        "model": settings.openrouter_model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(topic)},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+    with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
+        response = client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        body = response.json()
+
+    raw_text = body["choices"][0]["message"]["content"]
+    return _parse_script(topic, raw_text)
+
+
 _TEMPLATE_ANGLES = [
     ("the hook", "Here's something you didn't expect about {topic}.", "a striking establishing shot representing {topic}"),
     ("context", "{topic} matters more than most people realize.", "an informative wide shot related to {topic}"),
@@ -143,6 +166,7 @@ def generate_script(topic: str) -> Script:
     providers = [
         Provider(name="gemini", call=lambda: _call_gemini(topic)),
         Provider(name="groq", call=lambda: _call_groq(topic)),
+        Provider(name="openrouter", call=lambda: _call_openrouter(topic)),
         Provider(name="local_template", call=lambda: _local_template_script(topic)),
     ]
     return call_with_fallback(providers, stage=STAGE)

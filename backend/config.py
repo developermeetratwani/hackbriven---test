@@ -9,9 +9,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-flash-latest"
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
+
+    openrouter_api_key: str = ""
+    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
 
     nvidia_api_key: str = ""
     nvidia_sd_model: str = "stabilityai/stable-diffusion-3.5-large"
