@@ -40,13 +40,22 @@ def build_ass_captions(scenes: list[SceneAssets], out_path: Path) -> Path:
     )
 
     lines: list[str] = []
-    for scene in scenes:
+    offset = 0.0
+    for scene in sorted(scenes, key=lambda s: s.index):
         for word in scene.caption_words:
-            start = _ass_timestamp(word.start_seconds)
-            end = _ass_timestamp(word.end_seconds)
+            # word.start_seconds/end_seconds are local to this scene's own
+            # audio clip (Whisper transcribes each scene's audio in
+            # isolation, starting at 0) - they must be shifted by every
+            # preceding scene's duration to land at the right time in the
+            # final concatenated video, or every scene after the first
+            # shows its captions at the wrong moment (confirmed live: they
+            # were all restarting at 0:00:00.00).
+            start = _ass_timestamp(offset + word.start_seconds)
+            end = _ass_timestamp(offset + word.end_seconds)
             lines.append(
                 f"Dialogue: 0,{start},{end},Caption,{{\\b1}}{word.word}{{\\b0}}"
             )
+        offset += scene.duration_seconds
 
     out_path.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")
     return out_path
