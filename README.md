@@ -87,6 +87,17 @@ Pollinations, edge-tts, Whisper) and every `ffmpeg`/`ffprobe` subprocess call is
 mocked at the boundary, per [`RULES.md`](RULES.md) §6. No API keys or network
 access are required to run the suite.
 
+An opt-in live integration test (`tests/test_integration_live.py`) runs the
+whole pipeline for real — local-template script, real Pollinations image, real
+edge-tts voice, real Whisper (if installed), real `ffmpeg`/`ffprobe` — with
+zero API keys. It's excluded by default (`pytest.ini`); run it explicitly:
+
+```bash
+pytest -m integration
+```
+
+It auto-skips if `ffmpeg`/`ffprobe` aren't on `PATH`.
+
 ## Pipeline stages
 
 ```
