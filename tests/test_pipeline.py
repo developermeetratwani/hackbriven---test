@@ -6,6 +6,7 @@ from unittest.mock import patch
 from backend.core import pipeline
 from backend.core.job_manager import JobManager
 from backend.models.schemas import CaptionWord, JobStatus, QualityReport, Script
+from backend.services import scene_planner
 
 
 def test_pipeline_runs_to_done(tmp_path: Path, sample_script: Script):
@@ -17,6 +18,7 @@ def test_pipeline_runs_to_done(tmp_path: Path, sample_script: Script):
          patch("backend.core.pipeline.image_generator.generate_image") as mock_image, \
          patch("backend.core.pipeline.voice_generator.synthesize") as mock_voice, \
          patch("backend.core.pipeline.caption_generator.transcribe", return_value=[CaptionWord(word="hi", start_seconds=0, end_seconds=0.3)]), \
+         patch("backend.core.pipeline.get_duration_seconds", return_value=4.0), \
          patch("backend.core.pipeline.video_composer.compose") as mock_compose, \
          patch("backend.core.pipeline.quality_gate.check") as mock_check:
 
@@ -44,6 +46,7 @@ def test_pipeline_retries_on_quality_gate_failure_then_fails(tmp_path: Path, sam
          patch("backend.core.pipeline.image_generator.generate_image"), \
          patch("backend.core.pipeline.voice_generator.synthesize"), \
          patch("backend.core.pipeline.caption_generator.transcribe", return_value=[]), \
+         patch("backend.core.pipeline.get_duration_seconds", return_value=4.0), \
          patch("backend.core.pipeline.video_composer.compose") as mock_compose, \
          patch("backend.core.pipeline.quality_gate.check") as mock_check:
 
@@ -59,6 +62,25 @@ def test_pipeline_retries_on_quality_gate_failure_then_fails(tmp_path: Path, sam
     assert updated.error_stage == "validation.quality_gate"
     assert "no audio track found" in (updated.error_reason or "")
     assert mock_compose.call_count == 3  # initial + 2 regenerate attempts
+
+
+def test_generate_scene_assets_uses_actual_audio_duration_not_script_guess(tmp_path: Path, sample_script: Script):
+    with patch("backend.core.pipeline.settings") as mock_settings, \
+         patch("backend.core.pipeline.image_generator.generate_image"), \
+         patch("backend.core.pipeline.voice_generator.synthesize"), \
+         patch("backend.core.pipeline.caption_generator.transcribe", return_value=[]), \
+         patch("backend.core.pipeline.get_duration_seconds", return_value=9.75) as mock_get_duration:
+
+        mock_settings.storage_path = tmp_path
+        plan = scene_planner.plan(sample_script)
+
+        assets = pipeline._generate_scene_assets("job123", plan)
+
+    assert mock_get_duration.call_count == len(sample_script.scenes)
+    assert all(asset.duration_seconds == 9.75 for asset in assets)
+    # the script's own (guessed) durations differ from 9.75, proving the
+    # real measured audio duration was used, not scene.duration_seconds
+    assert not any(s.duration_seconds == 9.75 for s in sample_script.scenes)
 
 
 def test_pipeline_marks_failed_on_story_engine_error(tmp_path: Path, sample_script: Script):

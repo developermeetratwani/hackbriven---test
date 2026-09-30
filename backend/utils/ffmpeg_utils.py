@@ -77,3 +77,11 @@ def probe(path: Path) -> dict:
         raise RuntimeError(f"ffprobe failed: {result.stderr.strip()}")
 
     return json.loads(result.stdout)
+
+
+def get_duration_seconds(path: Path) -> float:
+    data = probe(path)
+    duration = data.get("format", {}).get("duration")
+    if duration is None:
+        raise RuntimeError(f"ffprobe returned no duration for {path}")
+    return float(duration)

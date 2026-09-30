@@ -55,3 +55,20 @@ def test_resolve_binaries_caches_result(mock_which):
     _resolve_binaries()
 
     assert mock_which.call_count == 2  # one call per binary, only on the first resolve
+
+
+@patch("backend.utils.ffmpeg_utils.probe")
+def test_get_duration_seconds_returns_float(mock_probe, tmp_path):
+    mock_probe.return_value = {"format": {"duration": "12.34"}}
+
+    result = ffmpeg_utils.get_duration_seconds(tmp_path / "clip.mp4")
+
+    assert result == 12.34
+
+
+@patch("backend.utils.ffmpeg_utils.probe")
+def test_get_duration_seconds_raises_when_missing(mock_probe, tmp_path):
+    mock_probe.return_value = {"format": {}}
+
+    with pytest.raises(RuntimeError, match="no duration"):
+        ffmpeg_utils.get_duration_seconds(tmp_path / "clip.mp4")

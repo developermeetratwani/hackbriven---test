@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import logging
+import textwrap
 import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from backend.config import settings
 from backend.services.model_router import Provider, call_with_fallback
@@ -127,9 +129,56 @@ def _call_pollinations(prompt: str, out_path: Path) -> Path:
     return out_path
 
 
+def _prompt_to_gradient(prompt: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    digest = hashlib.sha256(prompt.encode("utf-8")).digest()
+    top = (80 + digest[0] % 120, 80 + digest[1] % 120, 80 + digest[2] % 120)
+    bottom = tuple(max(0, c - 70) for c in top)
+    return top, bottom
+
+
+def _generate_placeholder(prompt: str, out_path: Path) -> Path:
+    """Last-resort, fully offline image: a gradient card (color deterministically
+    derived from the prompt, so scenes stay visually distinct) with the scene's
+    image prompt rendered as centered text. Guarantees the Generation stage can
+    never hard-fail for lack of a working external image API - same role as
+    story_engine's local_template for the Intelligence stage."""
+    width, height = settings.target_width, settings.target_height
+    top, bottom = _prompt_to_gradient(prompt)
+
+    image = Image.new("RGB", (width, height), top)
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / height
+        row = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+        draw.line([(0, y), (width, y)], fill=row)
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 56)
+    except OSError:
+        font = ImageFont.load_default()
+
+    wrapped = textwrap.fill(prompt, width=24)
+    bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=14, align="center")
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.multiline_text(
+        ((width - text_w) // 2, (height - text_h) // 2),
+        wrapped,
+        font=font,
+        fill=(255, 255, 255),
+        align="center",
+        spacing=14,
+        stroke_width=3,
+        stroke_fill=(0, 0, 0),
+    )
+
+    image.save(out_path, format="PNG")
+    return out_path
+
+
 def generate_image(prompt: str, out_path: Path) -> Path:
     providers = [
         Provider(name="nvidia_sd35", call=lambda: _call_nvidia(prompt, out_path)),
         Provider(name="pollinations", call=lambda: _call_pollinations(prompt, out_path)),
+        Provider(name="local_placeholder", call=lambda: _generate_placeholder(prompt, out_path)),
     ]
     return call_with_fallback(providers, stage=STAGE)

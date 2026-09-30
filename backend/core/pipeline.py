@@ -16,6 +16,7 @@ from backend.services import (
     video_composer,
     voice_generator,
 )
+from backend.utils.ffmpeg_utils import get_duration_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,21 @@ def _generate_scene_assets(job_id: str, plan: ScenePlanSet) -> list[SceneAssets]
         voice_generator.synthesize(scene.narration, audio_path)
         caption_words = caption_generator.transcribe(audio_path)
 
+        # The script's duration_seconds is only ever a guess (an LLM or the
+        # local template estimating how long narration "should" take to
+        # read); edge-tts's actual spoken-audio length is what the Ken Burns
+        # clip and the final video must match, or video/audio drift out of
+        # sync and the quality gate correctly rejects the result. Always
+        # measure the real synthesized audio instead of trusting the guess.
+        actual_duration = get_duration_seconds(audio_path)
+
         assets.append(
             SceneAssets(
                 index=scene.index,
                 image_path=str(image_path),
                 audio_path=str(audio_path),
                 caption_words=caption_words,
-                duration_seconds=scene.duration_seconds,
+                duration_seconds=actual_duration,
             )
         )
 
@@ -70,12 +79,13 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
 
         job_manager.set_status(job_id, JobStatus.RUNNING_GENERATION)
         assets = _generate_scene_assets(job_id, plan)
+        expected_duration = sum(asset.duration_seconds for asset in assets)
 
         job_manager.set_status(job_id, JobStatus.RUNNING_COMPOSITION)
         video_path = video_composer.compose(assets, _job_dir(job_id))
 
         job_manager.set_status(job_id, JobStatus.RUNNING_VALIDATION)
-        report = quality_gate.check(video_path, plan.total_duration_seconds)
+        report = quality_gate.check(video_path, expected_duration)
 
         attempts = 0
         while not report.passed and attempts < settings.max_regenerate_attempts:
@@ -85,7 +95,7 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
                 job_id, attempts, report.reasons,
             )
             video_path = video_composer.compose(assets, _job_dir(job_id))
-            report = quality_gate.check(video_path, plan.total_duration_seconds)
+            report = quality_gate.check(video_path, expected_duration)
 
         job_manager.update(job_id, quality_report=report)
 

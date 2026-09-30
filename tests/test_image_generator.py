@@ -9,7 +9,6 @@ import httpx
 import pytest
 from PIL import Image
 
-from backend.core.exceptions import AllProvidersFailedError
 from backend.services import image_generator
 
 
@@ -178,7 +177,7 @@ def test_pace_pollinations_waits_out_the_remaining_interval(mock_sleep, mock_mon
 
 @patch("backend.services.image_generator.settings")
 @patch("backend.services.image_generator.httpx.Client")
-def test_generate_image_raises_when_all_providers_fail(mock_client_cls, mock_settings, tmp_path: Path):
+def test_generate_image_falls_back_to_local_placeholder(mock_client_cls, mock_settings, tmp_path: Path):
     mock_settings.nvidia_api_key = "fake-key"
     mock_settings.nvidia_sd_model = "model"
     mock_settings.target_width = 1080
@@ -190,5 +189,29 @@ def test_generate_image_raises_when_all_providers_fail(mock_client_cls, mock_set
     client.get.side_effect = RuntimeError("pollinations down")
     mock_client_cls.return_value.__enter__.return_value = client
 
-    with pytest.raises(AllProvidersFailedError):
-        image_generator.generate_image("prompt", tmp_path / "out.png")
+    out_path = tmp_path / "out.png"
+    result = image_generator.generate_image("a robot and a human shaking hands", out_path)
+
+    assert result == out_path
+    with Image.open(out_path) as saved:
+        assert saved.size == (1080, 1920)
+
+
+def test_prompt_to_gradient_is_deterministic():
+    first = image_generator._prompt_to_gradient("a red apple")
+    second = image_generator._prompt_to_gradient("a red apple")
+    assert first == second
+
+
+def test_prompt_to_gradient_differs_for_different_prompts():
+    a = image_generator._prompt_to_gradient("a red apple")
+    b = image_generator._prompt_to_gradient("a blue car")
+    assert a != b
+
+
+def test_generate_placeholder_produces_target_size(tmp_path: Path):
+    out_path = tmp_path / "placeholder.png"
+    result = image_generator._generate_placeholder("a robot and a human shaking hands", out_path)
+    assert result == out_path
+    with Image.open(out_path) as saved:
+        assert saved.size == (1080, 1920)
