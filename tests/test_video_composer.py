@@ -64,6 +64,50 @@ def test_build_ass_captions_sorts_out_of_order_scenes(sample_scene_assets: list[
     assert lines[0].startswith(f"Dialogue: 0,{expected_first_start}")
 
 
+def test_ken_burns_expr_varies_by_scene_index():
+    # The original bug report: every scene played the identical zoom-in,
+    # which read as flat/mechanical. Consecutive scene indices must now
+    # produce visibly different z/x/y expressions.
+    variants = [video_composer._ken_burns_expr(i, total_frames=100) for i in range(5)]
+    assert len(set(variants)) == 5  # all 5 built-in variants are distinct
+
+
+def test_ken_burns_expr_cycles_after_running_out_of_variants():
+    first = video_composer._ken_burns_expr(0, total_frames=100)
+    wrapped = video_composer._ken_burns_expr(5, total_frames=100)  # len(variants) == 5
+    assert first == wrapped
+
+
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_build_scene_clip_passes_variant_specific_filter(mock_run_ffmpeg, tmp_path: Path):
+    image_path = tmp_path / "scene.png"
+    image_path.write_bytes(b"fake")
+    out_path = tmp_path / "clip.mp4"
+
+    video_composer._build_scene_clip(image_path, 4.0, out_path, variant=2)
+
+    args = mock_run_ffmpeg.call_args[0][0]
+    vf_index = args.index("-vf")
+    filter_str = args[vf_index + 1]
+    z, x, y = video_composer._ken_burns_expr(2, total_frames=round(4.0 * 25))
+    assert f"z='{z}'" in filter_str
+    assert f"x='{x}'" in filter_str
+
+
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_compose_uses_a_different_motion_variant_per_scene(mock_run_ffmpeg, sample_scene_assets: list[SceneAssets], tmp_path: Path):
+    for asset in sample_scene_assets:
+        Path(asset.audio_path).write_bytes(b"fake")
+        Path(asset.image_path).write_bytes(b"fake")
+
+    job_dir = tmp_path / "job"
+    video_composer.compose(sample_scene_assets, job_dir)
+
+    ken_burns_calls = [c for c in mock_run_ffmpeg.call_args_list if "ken_burns" in c.kwargs["stage"]]
+    filters = [c.args[0][c.args[0].index("-vf") + 1] for c in ken_burns_calls]
+    assert len(set(filters)) == len(sample_scene_assets)  # each scene got a distinct motion
+
+
 @patch("backend.services.video_composer.run_ffmpeg")
 def test_compose_calls_ffmpeg_for_every_stage(mock_run_ffmpeg, sample_scene_assets: list[SceneAssets], tmp_path: Path):
     for asset in sample_scene_assets:

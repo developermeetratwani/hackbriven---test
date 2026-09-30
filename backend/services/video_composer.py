@@ -61,12 +61,34 @@ def build_ass_captions(scenes: list[SceneAssets], out_path: Path) -> Path:
     return out_path
 
 
-def _build_scene_clip(image_path: Path, duration_seconds: float, out_path: Path) -> Path:
+_KEN_BURNS_MAX_ZOOM = 1.15
+
+
+def _ken_burns_expr(variant: int, total_frames: int) -> tuple[str, str, str]:
+    """One of several distinct pan/zoom motions, cycled by scene index so
+    consecutive scenes don't all play the identical zoom-in (the flat,
+    mechanical look that prompted this change). Centered zoom formulas and
+    the zoom-out on(0) reset trick are the standard ffmpeg zoompan Ken
+    Burns patterns; `on` is zoompan's built-in output-frame-number variable."""
+    last_frame = max(total_frames - 1, 1)
+    centered_x, centered_y = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    variants: list[tuple[str, str, str]] = [
+        (f"min(zoom+0.0015,{_KEN_BURNS_MAX_ZOOM})", centered_x, centered_y),  # zoom in
+        (f"if(eq(on,0),{_KEN_BURNS_MAX_ZOOM},max(1.001,zoom-0.0015))", centered_x, centered_y),  # zoom out
+        (str(_KEN_BURNS_MAX_ZOOM), f"(iw-iw/zoom)*on/{last_frame}", centered_y),  # pan left->right
+        (str(_KEN_BURNS_MAX_ZOOM), f"(iw-iw/zoom)*(1-on/{last_frame})", centered_y),  # pan right->left
+        (str(_KEN_BURNS_MAX_ZOOM), centered_x, f"(ih-ih/zoom)*on/{last_frame}"),  # pan top->bottom
+    ]
+    return variants[variant % len(variants)]
+
+
+def _build_scene_clip(image_path: Path, duration_seconds: float, out_path: Path, *, variant: int = 0) -> Path:
     width, height = settings.target_width, settings.target_height
     total_frames = max(1, round(duration_seconds * 25))
+    z, x, y = _ken_burns_expr(variant, total_frames)
     zoompan = (
         f"scale={width * 2}:{height * 2},"
-        f"zoompan=z='min(zoom+0.0015,1.15)':d={total_frames}:s={width}x{height}:fps=25,"
+        f"zoompan=z='{z}':x='{x}':y='{y}':d={total_frames}:s={width}x{height}:fps=25,"
         f"format=yuv420p"
     )
     run_ffmpeg(
@@ -112,7 +134,7 @@ def compose(
     scene_clip_paths: list[Path] = []
     for scene in sorted(scenes, key=lambda s: s.index):
         clip_path = job_dir / f"scene_{scene.index:02d}_clip.mp4"
-        _build_scene_clip(Path(scene.image_path), scene.duration_seconds, clip_path)
+        _build_scene_clip(Path(scene.image_path), scene.duration_seconds, clip_path, variant=scene.index)
         scene_clip_paths.append(clip_path)
 
     silent_video = job_dir / "silent.mp4"
