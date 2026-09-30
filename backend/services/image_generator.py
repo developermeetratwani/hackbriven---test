@@ -45,19 +45,28 @@ def _pace_pollinations() -> None:
         _pollinations_last_call_at = time.monotonic()
 
 
+# NVIDIA's hosted image models (live-confirmed with black-forest-labs/flux.1-dev,
+# the configured default) only accept width/height from a fixed enumerated set,
+# not our arbitrary 1080x1920 target - request the closest valid pair to our
+# 9:16 aspect ratio, then center-crop to the exact target like the Pollinations
+# path does, rather than assuming any model accepts arbitrary dimensions.
+_NVIDIA_REQUEST_WIDTH = 768
+_NVIDIA_REQUEST_HEIGHT = 1344
+
+
 def _call_nvidia(prompt: str, out_path: Path) -> Path:
     if not settings.nvidia_api_key:
         raise RuntimeError("NVIDIA_API_KEY not configured")
 
-    url = f"https://ai.api.nvidia.com/v1/genai/{settings.nvidia_sd_model}"
+    url = f"https://ai.api.nvidia.com/v1/genai/{settings.nvidia_image_model}"
     headers = {
         "Authorization": f"Bearer {settings.nvidia_api_key}",
         "Accept": "application/json",
     }
     payload = {
         "prompt": prompt,
-        "width": settings.target_width,
-        "height": settings.target_height,
+        "width": _NVIDIA_REQUEST_WIDTH,
+        "height": _NVIDIA_REQUEST_HEIGHT,
     }
     with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
         response = client.post(url, json=payload, headers=headers)
@@ -65,7 +74,9 @@ def _call_nvidia(prompt: str, out_path: Path) -> Path:
         body = response.json()
 
     image_b64 = body.get("image") or body["artifacts"][0]["base64"]
-    out_path.write_bytes(base64.b64decode(image_b64))
+    image = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+    cropped = _center_crop(image, settings.target_width, settings.target_height)
+    cropped.save(out_path, format="PNG")
     return out_path
 
 

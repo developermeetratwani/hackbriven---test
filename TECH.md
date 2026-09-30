@@ -8,7 +8,7 @@
 | Backend API | FastAPI + Uvicorn | Async-friendly, typed, auto docs, thin layer over the pipeline |
 | Frontend (later phase) | Gradio | Matches the original prototype: topic input, live stage status, video preview |
 | Script/story LLM | Gemini (primary) → Groq → OpenRouter → local template (last resort) | Structured JSON generation; three independent LLM providers, plus a keyless deterministic template so the stage never hard-fails for lack of an API key |
-| Image generation | NVIDIA Stable Diffusion 3.5 (primary) → Pollinations (fallback, free, no key) | Free-tier friendly with a no-key last resort |
+| Image generation | NVIDIA-hosted FLUX.1-dev (primary) → Pollinations (free, no key) → local gradient+text placeholder (last resort) | Enumerated request sizes from both external providers are center-cropped to the target aspect ratio; the stage can never hard-fail |
 | Voice | `edge-tts` | Free, no API key, good neural voices |
 | Captions | `faster-whisper` (CPU, int8) | Word-level timestamps for karaoke captions; resumable `huggingface_hub` model download (see §7 for why not `openai-whisper`) |
 | Motion (optional) | fal.ai LTX (paid, ~$0.02/clip) → Ken Burns (ffmpeg/Pillow, free, always available) | Ken Burns is the default; fal.ai is opt-in via config |
@@ -42,7 +42,7 @@ HACKBRIVEN-1/
 │   │   ├── model_router.py       # Generic "try providers in order" helper
 │   │   ├── story_engine.py       # Stage 2: Gemini -> Groq
 │   │   ├── scene_planner.py      # Stage 3: script JSON -> per-scene plan
-│   │   ├── image_generator.py    # Stage 4: NVIDIA SD3.5 -> Pollinations
+│   │   ├── image_generator.py    # Stage 4: NVIDIA FLUX.1-dev -> Pollinations -> local placeholder
 │   │   ├── voice_generator.py    # Stage 5: edge-tts
 │   │   ├── caption_generator.py  # Stage 6: Whisper word timestamps
 │   │   ├── video_composer.py     # Stage 7: ffmpeg/Pillow composition
@@ -84,7 +84,7 @@ Pipeline.run(job_id)                         (background task)
    │                    scene_planner.plan(script) -> list[ScenePlan]
    │
    ├─ 2. GENERATION      for each scene, in parallel-safe sequence:
-   │                     image_generator.generate(prompt) : NVIDIA ──fail──► Pollinations
+   │                     image_generator.generate(prompt) : NVIDIA ──fail──► Pollinations ──fail──► local placeholder
    │                     voice_generator.synthesize(narration) : edge-tts
    │                     caption_generator.transcribe(audio) : Whisper word timestamps
    │
@@ -118,7 +118,8 @@ def call_with_fallback(providers: list[Callable[[], T]], *, stage: str) -> T:
 
 Each service builds its provider list from `config.py` (so swapping/retiring a
 model is a config change), then calls `call_with_fallback`. This is the single
-implementation of the "Gemini→Groq, NVIDIA→Pollinations, fal.ai→Ken Burns" pattern
+implementation of the "Gemini→Groq→OpenRouter→local template, NVIDIA→Pollinations→
+local placeholder, fal.ai→Ken Burns" pattern
 described in the PRD — one mechanism, reused per stage rather than reimplemented.
 
 ## 5. Job state machine
@@ -137,10 +138,11 @@ an oversight — swapping in persistent storage later only touches `JobManager`.
 
 `backend/config.py` uses `pydantic-settings.BaseSettings` to load from `.env`:
 
-- `GEMINI_API_KEY`, `GROQ_API_KEY`
-- `NVIDIA_API_KEY` (Pollinations needs no key)
+- `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`
+- `NVIDIA_API_KEY` (Pollinations and the local placeholder need no key)
 - `FAL_API_KEY` (optional; motion stage is skipped/Ken-Burns-only if unset)
-- `GEMINI_MODEL`, `GROQ_MODEL`, `NVIDIA_SD_MODEL`, `WHISPER_MODEL` — model **names**
+- `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `NVIDIA_IMAGE_MODEL`,
+  `WHISPER_MODEL` — model **names**
   are config values, never hardcoded in service code, so a model retirement is a
   one-line `.env` change.
 - `STORAGE_DIR` — root for per-job artifacts (defaults to `storage/jobs`).

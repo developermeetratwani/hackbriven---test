@@ -12,10 +12,14 @@ from PIL import Image
 from backend.services import image_generator
 
 
-def _fake_square_jpeg_bytes(size: int = 1920) -> bytes:
+def _fake_jpeg_bytes(width: int, height: int) -> bytes:
     buf = io.BytesIO()
-    Image.new("RGB", (size, size), color=(120, 180, 240)).save(buf, format="JPEG")
+    Image.new("RGB", (width, height), color=(120, 180, 240)).save(buf, format="JPEG")
     return buf.getvalue()
+
+
+def _fake_square_jpeg_bytes(size: int = 1920) -> bytes:
+    return _fake_jpeg_bytes(size, size)
 
 
 @pytest.fixture(autouse=True)
@@ -29,12 +33,16 @@ def _reset_pollinations_pacing():
 @patch("backend.services.image_generator.httpx.Client")
 def test_generate_image_uses_nvidia_when_available(mock_client_cls, mock_settings, tmp_path: Path):
     mock_settings.nvidia_api_key = "fake-key"
-    mock_settings.nvidia_sd_model = "stabilityai/stable-diffusion-3.5-large"
+    mock_settings.nvidia_image_model = "black-forest-labs/flux.1-dev"
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
     mock_settings.provider_timeout_seconds = 5.0
 
-    fake_image_bytes = b"PNGDATA"
+    # NVIDIA's hosted models only accept enumerated dimensions (live-confirmed
+    # with FLUX.1-dev), so _call_nvidia requests a fixed non-target size and
+    # center-crops - the fake response must be a real decodable image, not
+    # opaque bytes, and the saved output must end up at the target size.
+    fake_image_bytes = _fake_jpeg_bytes(768, 1344)
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.return_value = {"image": base64.b64encode(fake_image_bytes).decode()}
@@ -47,14 +55,19 @@ def test_generate_image_uses_nvidia_when_available(mock_client_cls, mock_setting
     result = image_generator.generate_image("ev charging at home", out_path)
 
     assert result == out_path
-    assert out_path.read_bytes() == fake_image_bytes
+    with Image.open(out_path) as saved:
+        assert saved.size == (1080, 1920)
+
+    requested_payload = client.post.call_args.kwargs["json"]
+    assert requested_payload["width"] == image_generator._NVIDIA_REQUEST_WIDTH
+    assert requested_payload["height"] == image_generator._NVIDIA_REQUEST_HEIGHT
 
 
 @patch("backend.services.image_generator.settings")
 @patch("backend.services.image_generator.httpx.Client")
 def test_generate_image_falls_back_to_pollinations(mock_client_cls, mock_settings, tmp_path: Path):
     mock_settings.nvidia_api_key = "fake-key"
-    mock_settings.nvidia_sd_model = "model"
+    mock_settings.nvidia_image_model = "model"
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
     mock_settings.provider_timeout_seconds = 5.0
@@ -179,7 +192,7 @@ def test_pace_pollinations_waits_out_the_remaining_interval(mock_sleep, mock_mon
 @patch("backend.services.image_generator.httpx.Client")
 def test_generate_image_falls_back_to_local_placeholder(mock_client_cls, mock_settings, tmp_path: Path):
     mock_settings.nvidia_api_key = "fake-key"
-    mock_settings.nvidia_sd_model = "model"
+    mock_settings.nvidia_image_model = "model"
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
     mock_settings.provider_timeout_seconds = 5.0

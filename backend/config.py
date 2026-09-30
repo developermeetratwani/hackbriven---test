@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
 
     nvidia_api_key: str = ""
-    nvidia_sd_model: str = "stabilityai/stable-diffusion-3.5-large"
+    nvidia_image_model: str = "black-forest-labs/flux.1-dev"
 
     edge_tts_voice: str = "en-US-AriaNeural"
 

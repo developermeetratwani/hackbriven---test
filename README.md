@@ -18,12 +18,14 @@ scaffolding (Phase 7: Dockerfile, CI, HF Space config) are also in place.
 **Verified live end to end, not just mocked**: script generation
 (Gemini → Groq → OpenRouter → local template, in that order — all four
 providers live-tested, including a real Gemini 503 falling through
-correctly), images (Pollinations, keyless), voice (`edge-tts`, keyless),
+correctly), images (NVIDIA-hosted FLUX.1-dev → Pollinations → local
+placeholder, all three live-tested), voice (`edge-tts`, keyless),
 captions (`faster-whisper`, keyless — CPU, word-level timestamps), and
 composition/validation (`ffmpeg`/`ffprobe`, via the `static-ffmpeg` pip
-fallback — no admin rights needed). Pending from you: an `NVIDIA_API_KEY`
-(the PRD's primary image provider) and a `FAL_API_KEY` motion-stage
-integration (not built yet, optional — Ken Burns is the default and works).
+fallback — no admin rights needed). A full real run (`pipeline.run`, the
+actual code path) reached `DONE` with the quality gate passing. Still
+pending from you: a `FAL_API_KEY` motion-stage integration (not built
+yet, optional — Ken Burns is the default and works).
 
 ## Requirements
 
