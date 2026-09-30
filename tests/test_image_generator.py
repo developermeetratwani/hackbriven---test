@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from PIL import Image
 
@@ -94,6 +95,60 @@ def test_center_crop_is_centered_horizontally():
     right_pixel = cropped.getpixel((1079, 0))
     assert left_pixel == (255, 0, 0)
     assert right_pixel == (0, 0, 255)
+
+
+def _http_402_error() -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://image.pollinations.ai/prompt/x")
+    response = httpx.Response(402, request=request)
+    return httpx.HTTPStatusError("402 Payment Required", request=request, response=response)
+
+
+@patch("backend.services.image_generator.time.sleep")
+@patch("backend.services.image_generator.settings")
+@patch("backend.services.image_generator.httpx.Client")
+def test_call_pollinations_retries_on_402_then_succeeds(mock_client_cls, mock_settings, mock_sleep, tmp_path: Path):
+    mock_settings.target_width = 1080
+    mock_settings.target_height = 1920
+    mock_settings.provider_timeout_seconds = 5.0
+
+    ok_response = MagicMock()
+    ok_response.raise_for_status.return_value = None
+    ok_response.content = _fake_square_jpeg_bytes(1920)
+
+    client = MagicMock()
+
+    def get_side_effect(*_args, **_kwargs):
+        if client.get.call_count <= 2:
+            raise _http_402_error()
+        return ok_response
+
+    client.get.side_effect = get_side_effect
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    out_path = tmp_path / "scene_00.png"
+    result = image_generator._call_pollinations("a red apple", out_path)
+
+    assert result == out_path
+    assert client.get.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+@patch("backend.services.image_generator.time.sleep")
+@patch("backend.services.image_generator.settings")
+@patch("backend.services.image_generator.httpx.Client")
+def test_call_pollinations_gives_up_after_max_attempts(mock_client_cls, mock_settings, mock_sleep, tmp_path: Path):
+    mock_settings.target_width = 1080
+    mock_settings.target_height = 1920
+    mock_settings.provider_timeout_seconds = 5.0
+
+    client = MagicMock()
+    client.get.side_effect = lambda *a, **k: (_ for _ in ()).throw(_http_402_error())
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    with pytest.raises(httpx.HTTPStatusError):
+        image_generator._call_pollinations("a red apple", tmp_path / "out.png")
+
+    assert client.get.call_count == image_generator._POLLINATIONS_MAX_ATTEMPTS
 
 
 @patch("backend.services.image_generator.settings")

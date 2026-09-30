@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -15,6 +16,10 @@ from backend.services.model_router import Provider, call_with_fallback
 logger = logging.getLogger(__name__)
 
 STAGE = "generation.image"
+
+_POLLINATIONS_RETRYABLE_STATUS = {402, 429, 503}
+_POLLINATIONS_MAX_ATTEMPTS = 3
+_POLLINATIONS_RETRY_DELAY_SECONDS = 3.0
 
 
 def _call_nvidia(prompt: str, out_path: Path) -> Path:
@@ -56,15 +61,40 @@ def _call_pollinations(prompt: str, out_path: Path) -> Path:
     images with no `nologo` param - any other aspect ratio or the nologo
     flag returns 402 Payment Required (confirmed live, not documented
     anywhere at the time this was written). Request a square at our target
-    height, then center-crop to the target vertical aspect ratio."""
+    height, then center-crop to the target vertical aspect ratio.
+
+    Even square requests intermittently 402/429 under moderate call volume
+    (live-confirmed: the exact same request failed, then succeeded seconds
+    later with no code change) - a short retry-with-backoff absorbs that
+    without escalating to the next provider in the chain unnecessarily.
+    """
     size = settings.target_height
     encoded_prompt = quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={size}&height={size}"
-    with httpx.Client(timeout=settings.provider_timeout_seconds, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        content = response.content
 
+    content = b""
+    last_error: Exception | None = None
+    for attempt in range(1, _POLLINATIONS_MAX_ATTEMPTS + 1):
+        try:
+            with httpx.Client(timeout=settings.provider_timeout_seconds, follow_redirects=True) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                content = response.content
+            last_error = None
+            break
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            status = exc.response.status_code
+            if status not in _POLLINATIONS_RETRYABLE_STATUS or attempt == _POLLINATIONS_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "pollinations attempt %s/%s got %s, retrying in %ss",
+                attempt, _POLLINATIONS_MAX_ATTEMPTS, status, _POLLINATIONS_RETRY_DELAY_SECONDS,
+            )
+            time.sleep(_POLLINATIONS_RETRY_DELAY_SECONDS)
+
+    if last_error is not None:
+        raise last_error
     if not content:
         raise RuntimeError("pollinations returned empty image body")
 
