@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -18,8 +19,28 @@ logger = logging.getLogger(__name__)
 STAGE = "generation.image"
 
 _POLLINATIONS_RETRYABLE_STATUS = {402, 429, 503}
-_POLLINATIONS_MAX_ATTEMPTS = 3
-_POLLINATIONS_RETRY_DELAY_SECONDS = 3.0
+_POLLINATIONS_MAX_ATTEMPTS = 4
+_POLLINATIONS_RETRY_DELAY_SECONDS = 8.0
+
+# A pipeline job calls Pollinations once per scene, back-to-back - live
+# testing showed that alone is enough to trip its free-tier rate limit
+# (confirmed: identical requests fail then succeed seconds apart with no
+# code change). Space calls out proactively so a job's own request burst
+# doesn't trigger the limit in the first place; the retry above still
+# covers genuinely external contention (other users hitting the same pool).
+_POLLINATIONS_MIN_INTERVAL_SECONDS = 10.0
+_pollinations_pacing_lock = threading.Lock()
+_pollinations_last_call_at = 0.0
+
+
+def _pace_pollinations() -> None:
+    global _pollinations_last_call_at
+    with _pollinations_pacing_lock:
+        now = time.monotonic()
+        wait = _POLLINATIONS_MIN_INTERVAL_SECONDS - (now - _pollinations_last_call_at)
+        if wait > 0:
+            time.sleep(wait)
+        _pollinations_last_call_at = time.monotonic()
 
 
 def _call_nvidia(prompt: str, out_path: Path) -> Path:
@@ -71,6 +92,8 @@ def _call_pollinations(prompt: str, out_path: Path) -> Path:
     size = settings.target_height
     encoded_prompt = quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={size}&height={size}"
+
+    _pace_pollinations()
 
     content = b""
     last_error: Exception | None = None

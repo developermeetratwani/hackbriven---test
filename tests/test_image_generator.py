@@ -19,6 +19,13 @@ def _fake_square_jpeg_bytes(size: int = 1920) -> bytes:
     return buf.getvalue()
 
 
+@pytest.fixture(autouse=True)
+def _reset_pollinations_pacing():
+    image_generator._pollinations_last_call_at = 0.0
+    yield
+    image_generator._pollinations_last_call_at = 0.0
+
+
 @patch("backend.services.image_generator.settings")
 @patch("backend.services.image_generator.httpx.Client")
 def test_generate_image_uses_nvidia_when_available(mock_client_cls, mock_settings, tmp_path: Path):
@@ -149,6 +156,24 @@ def test_call_pollinations_gives_up_after_max_attempts(mock_client_cls, mock_set
         image_generator._call_pollinations("a red apple", tmp_path / "out.png")
 
     assert client.get.call_count == image_generator._POLLINATIONS_MAX_ATTEMPTS
+
+
+@patch("backend.services.image_generator.time.sleep")
+def test_pace_pollinations_skips_wait_on_first_call(mock_sleep):
+    image_generator._pace_pollinations()
+    mock_sleep.assert_not_called()
+
+
+@patch("backend.services.image_generator.time.monotonic")
+@patch("backend.services.image_generator.time.sleep")
+def test_pace_pollinations_waits_out_the_remaining_interval(mock_sleep, mock_monotonic):
+    # First call at t=1000 (well past the reset last_call_at=0, so no wait);
+    # second call 2s later at t=1002 should sleep for the remaining 8s of
+    # the 10s minimum interval.
+    mock_monotonic.side_effect = [1000.0, 1000.0, 1002.0, 1002.0]
+    image_generator._pace_pollinations()
+    image_generator._pace_pollinations()
+    mock_sleep.assert_called_once_with(pytest.approx(8.0))
 
 
 @patch("backend.services.image_generator.settings")
