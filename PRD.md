@@ -129,14 +129,17 @@ exposes: create job, get job status/progress, get job result (video path/URL),
 list jobs. This API is the contract the Gradio frontend (and any future frontend)
 consumes.
 
-### Phase 6 — Frontend (Gradio)
+### Phase 6 — Frontend (Gradio) — scaffolded
 Topic input box, live per-stage status, video preview on completion. Talks only to
-the Phase 5 API. *(Not built in this pass — backend-first per current scope.)*
+the Phase 5 API (`frontend/app.py`, polls `GET /jobs/{id}`).
 
-### Phase 7 — Deployment & Hardening
-Public GitHub repo, Hugging Face Space deployment for the Gradio app, config-driven
-model names (so a retired model is a config change, not a code change), wake-before-
-demo handling for free Spaces sleeping on idle, CI running the offline test suite.
+### Phase 7 — Deployment & Hardening — scaffolded
+`Dockerfile` (installs `ffmpeg`, runs `app.py`), root `app.py` bundling backend +
+Gradio into one process for a Hugging Face Space, `deploy/huggingface/README.md`
+(Space card template), and `.github/workflows/ci.yml` running the offline test
+suite. Config-driven model names are already in place (`backend/config.py`).
+Wake-before-demo handling for free Spaces sleeping on idle is a manual step at
+demo time, not code.
 
 ## 8. Success criteria for the backend (Phases 0–5)
 

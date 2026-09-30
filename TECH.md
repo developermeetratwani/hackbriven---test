@@ -7,7 +7,7 @@
 | Language | Python 3.11+ | Every required library (ffmpeg bindings, Whisper, edge-tts, Gradio) is Python-first |
 | Backend API | FastAPI + Uvicorn | Async-friendly, typed, auto docs, thin layer over the pipeline |
 | Frontend (later phase) | Gradio | Matches the original prototype: topic input, live stage status, video preview |
-| Script/story LLM | Gemini Flash (primary) → Groq (fallback) | Structured JSON generation; two independent free-tier providers |
+| Script/story LLM | Gemini Flash (primary) → Groq (fallback) → local template (last resort) | Structured JSON generation; two independent free-tier providers, plus a keyless deterministic template so the stage never hard-fails for lack of an API key |
 | Image generation | NVIDIA Stable Diffusion 3.5 (primary) → Pollinations (fallback, free, no key) | Free-tier friendly with a no-key last resort |
 | Voice | `edge-tts` | Free, no API key, good neural voices |
 | Captions | `openai-whisper` (or `faster-whisper`) | Word-level timestamps for karaoke captions |

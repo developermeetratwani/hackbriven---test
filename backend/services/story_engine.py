@@ -104,9 +104,45 @@ def _call_groq(topic: str) -> Script:
     return _parse_script(topic, raw_text)
 
 
+_TEMPLATE_ANGLES = [
+    ("the hook", "Here's something you didn't expect about {topic}.", "a striking establishing shot representing {topic}"),
+    ("context", "{topic} matters more than most people realize.", "an informative wide shot related to {topic}"),
+    ("key point", "The biggest driver behind {topic} is changing fast.", "a close-up illustrating a key detail of {topic}"),
+    ("evidence", "The numbers around {topic} tell their own story.", "a visual metaphor for data or growth tied to {topic}"),
+    ("takeaway", "So here's what {topic} means for you.", "a closing shot that ties {topic} together"),
+]
+
+
+def _local_template_script(topic: str) -> Script:
+    """Deterministic, offline, no-key script generator.
+
+    Last resort in the fallback chain: guarantees the Intelligence stage can
+    always produce a usable Script even with zero LLM providers configured,
+    so the rest of the pipeline (which needs no API keys at all) stays fully
+    runnable while real keys are pending.
+    """
+    scenes = [
+        {
+            "narration": narration.format(topic=topic),
+            "image_prompt": image_prompt.format(topic=topic),
+            "duration_seconds": 4.0,
+            "mood": "neutral",
+            "index": i,
+        }
+        for i, (_label, narration, image_prompt) in enumerate(_TEMPLATE_ANGLES)
+    ]
+    return Script(
+        topic=topic,
+        hook=f"{topic}. Here's what's really going on.",
+        mood="neutral",
+        scenes=scenes,
+    )
+
+
 def generate_script(topic: str) -> Script:
     providers = [
         Provider(name="gemini", call=lambda: _call_gemini(topic)),
         Provider(name="groq", call=lambda: _call_groq(topic)),
+        Provider(name="local_template", call=lambda: _local_template_script(topic)),
     ]
     return call_with_fallback(providers, stage=STAGE)

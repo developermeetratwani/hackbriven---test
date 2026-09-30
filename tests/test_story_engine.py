@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.core.exceptions import AllProvidersFailedError, InvalidScriptError
+from backend.core.exceptions import InvalidScriptError
 from backend.services import story_engine
 
 VALID_JSON = json.dumps(
@@ -81,12 +81,21 @@ def test_generate_script_falls_back_to_groq_on_gemini_failure(mock_client_cls, m
 
 
 @patch("backend.services.story_engine.settings")
-def test_generate_script_raises_when_no_providers_configured(mock_settings):
+def test_generate_script_falls_back_to_local_template_with_no_keys(mock_settings):
     mock_settings.gemini_api_key = ""
     mock_settings.groq_api_key = ""
 
-    with pytest.raises(AllProvidersFailedError):
-        story_engine.generate_script("Why EVs are popular")
+    script = story_engine.generate_script("Why EVs are popular")
+
+    assert script.topic == "Why EVs are popular"
+    assert len(script.scenes) == 5
+    assert all(s.narration for s in script.scenes)
+
+
+def test_local_template_script_is_deterministic():
+    first = story_engine._local_template_script("Why EVs are popular")
+    second = story_engine._local_template_script("Why EVs are popular")
+    assert first == second
 
 
 def test_parse_script_rejects_invalid_json():

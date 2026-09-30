@@ -13,17 +13,49 @@ Backend (PRD Phases 0–5) is implemented: Intelligence (script + scene planning
 Generation (images, voice, captions, each with provider fallback chains),
 Composition (ffmpeg/Pillow), Validation (ffprobe quality gate), and a thin
 FastAPI job-orchestration API. The Gradio frontend (Phase 6) and deployment
-scripts (Phase 7) are not part of this pass.
+scaffolding (Phase 7: Dockerfile, CI, HF Space config) are also in place.
+
+**Working right now with zero API keys** (verified live, not just mocked):
+the Intelligence stage falls back to a deterministic local template when no
+LLM key is configured, images fall back to the keyless Pollinations API, and
+voice uses `edge-tts` (no key ever required). Only the NVIDIA/Gemini/Groq
+*primary* providers and the Whisper caption stage (needs `openai-whisper` +
+`torch`, not installed by default — heavy, keyless but large) are still
+pending your keys / an explicit install. `ffmpeg`/`ffprobe` are also not
+installed on this machine — see **Requirements** below — so composition and
+the quality gate are implemented and unit-tested but not yet exercised live
+here.
 
 ## Requirements
 
 - Python 3.11+
 - `ffmpeg` and `ffprobe` on `PATH` (system install, not pip) — required for the
   composition and validation stages; not required to run the unit test suite,
-  which mocks the subprocess boundary.
-- API keys for at least one story-engine provider (Gemini or Groq) and one
-  image provider (NVIDIA, or rely on the keyless Pollinations fallback) to run
-  the pipeline against live services.
+  which mocks the subprocess boundary. Install with `choco install ffmpeg`
+  (Windows, needs an elevated/admin shell), `brew install ffmpeg` (macOS), or
+  `apt-get install ffmpeg` (Debian/Ubuntu — this is also what the `Dockerfile`
+  does automatically).
+- No API keys are required to boot the pipeline — every stage has a keyless
+  fallback (local template script, Pollinations images, edge-tts voice).
+  Add `GEMINI_API_KEY` / `GROQ_API_KEY` / `NVIDIA_API_KEY` / `FAL_API_KEY` to
+  `.env` whenever you have them to use the higher-quality primary providers
+  instead.
+- `pip install openai-whisper torch` for real captions — large download, not
+  in the default install path above; the caption stage will otherwise be the
+  one piece needing that explicit opt-in.
+
+## Run the frontend (Gradio)
+
+```bash
+uvicorn backend.api.main:app --reload &   # backend on :8000
+python frontend/app.py                    # Gradio UI, polls the backend
+```
+
+Or bundle both into one process the way a Hugging Face Space runs it:
+
+```bash
+python app.py
+```
 
 ## Setup
 
