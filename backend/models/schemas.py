@@ -25,6 +25,15 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+class MotionTier(str, Enum):
+    """How much real generative AI motion (Magic Hour, credit-metered) a job
+    uses versus free Ken Burns pan/zoom."""
+
+    MAX = "max"  # every scene attempts real motion
+    BALANCED = "balanced"  # settings.magic_hour_max_scenes_per_job scenes (default)
+    BASIC = "basic"  # Ken Burns only, zero credits spent
+
+
 class Scene(BaseModel):
     index: int
     narration: str
@@ -98,6 +107,7 @@ class StageTimestamp(BaseModel):
 class Job(BaseModel):
     id: str = Field(default_factory=_job_id)
     topic: str
+    motion_tier: MotionTier = MotionTier.BALANCED
     status: JobStatus = JobStatus.QUEUED
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)

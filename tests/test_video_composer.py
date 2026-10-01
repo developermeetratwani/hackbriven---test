@@ -191,6 +191,23 @@ def test_select_motion_scene_positions_picks_first_and_last():
     assert video_composer._select_motion_scene_positions(5, max_count=2) == {0, 4}
 
 
+def test_select_motion_scene_positions_all_scenes_when_budget_covers_all():
+    # MotionTier.MAX: budget >= scene_count must select every scene, not
+    # just opening+closing.
+    assert video_composer._select_motion_scene_positions(5, max_count=5) == {0, 1, 2, 3, 4}
+    assert video_composer._select_motion_scene_positions(3, max_count=10) == {0, 1, 2}
+
+
+def test_motion_budget_for_tier():
+    from backend.models.schemas import MotionTier
+
+    with patch("backend.services.video_composer.settings") as mock_settings:
+        mock_settings.magic_hour_max_scenes_per_job = 2
+        assert video_composer._motion_budget_for_tier(MotionTier.MAX, 5) == 5
+        assert video_composer._motion_budget_for_tier(MotionTier.BALANCED, 5) == 2
+        assert video_composer._motion_budget_for_tier(MotionTier.BASIC, 5) == 0
+
+
 def test_select_motion_scene_positions_respects_max_count_of_one():
     assert video_composer._select_motion_scene_positions(5, max_count=1) == {0}
 

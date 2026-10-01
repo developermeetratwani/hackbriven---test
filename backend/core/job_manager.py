@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 
 from backend.core.exceptions import JobNotFoundError
-from backend.models.schemas import Job, JobStatus, StageTimestamp
+from backend.models.schemas import Job, JobStatus, MotionTier, StageTimestamp
 
 
 class JobManager:
@@ -13,8 +13,8 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def create(self, topic: str) -> Job:
-        job = Job(topic=topic)
+    def create(self, topic: str, *, motion_tier: MotionTier = MotionTier.BALANCED) -> Job:
+        job = Job(topic=topic, motion_tier=motion_tier)
         job.history.append(StageTimestamp(stage="input", status="accepted"))
         with self._lock:
             self._jobs[job.id] = job

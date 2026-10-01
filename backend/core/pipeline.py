@@ -83,7 +83,7 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
         expected_duration = sum(asset.duration_seconds for asset in assets)
 
         job_manager.set_status(job_id, JobStatus.RUNNING_COMPOSITION)
-        video_path = video_composer.compose(assets, _job_dir(job_id))
+        video_path = video_composer.compose(assets, _job_dir(job_id), motion_tier=job.motion_tier)
 
         job_manager.set_status(job_id, JobStatus.RUNNING_VALIDATION)
         report = quality_gate.check(video_path, expected_duration)
@@ -95,7 +95,7 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
                 "job=%s quality gate failed (attempt %s): %s",
                 job_id, attempts, report.reasons,
             )
-            video_path = video_composer.compose(assets, _job_dir(job_id))
+            video_path = video_composer.compose(assets, _job_dir(job_id), motion_tier=job.motion_tier)
             report = quality_gate.check(video_path, expected_duration)
 
         job_manager.update(job_id, quality_report=report)

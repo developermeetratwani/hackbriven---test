@@ -5,7 +5,7 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.core.exceptions import CompositionError
-from backend.models.schemas import SceneAssets
+from backend.models.schemas import MotionTier, SceneAssets
 from backend.services import motion_generator
 from backend.utils.ffmpeg_utils import run_ffmpeg
 
@@ -222,15 +222,25 @@ def _crossfade_video(clip_paths: list[Path], durations: list[float], out_path: P
 def _select_motion_scene_positions(scene_count: int, max_count: int) -> set[int]:
     """Which scene positions (0-indexed, in ordered_scenes order) should try
     real generative motion instead of Ken Burns. Opening and closing scenes
-    carry the most visual weight, so they're prioritized first; credits are
-    scarce (free tier: ~120 per 5s clip) so this stays capped rather than
-    applying to every scene."""
+    carry the most visual weight, so they're prioritized first when the
+    budget is limited; a budget covering every scene (MotionTier.MAX)
+    selects all of them."""
     if max_count <= 0 or scene_count == 0:
         return set()
-    if scene_count == 1 or max_count == 1:
-        return {0}
-    positions = {0, scene_count - 1}
-    return set(list(positions)[:max_count]) if max_count < len(positions) else positions
+    if max_count >= scene_count:
+        return set(range(scene_count))
+    priority = [0, scene_count - 1] + list(range(1, scene_count - 1))
+    return set(priority[:max_count])
+
+
+def _motion_budget_for_tier(tier: MotionTier, scene_count: int) -> int:
+    """How many scenes may attempt real generative motion, before the
+    settings.magic_hour_api_key gate is even checked."""
+    if tier == MotionTier.MAX:
+        return scene_count  # every scene
+    if tier == MotionTier.BALANCED:
+        return settings.magic_hour_max_scenes_per_job
+    return 0  # BASIC: Ken Burns only, zero credits spent
 
 
 def compose(
@@ -238,14 +248,14 @@ def compose(
     job_dir: Path,
     *,
     music_path: Path | None = None,
+    motion_tier: MotionTier = MotionTier.BALANCED,
 ) -> Path:
     """Combine per-scene images + audio + captions into one publish-ready MP4.
 
-    Pipeline: per-scene clip (real generative motion for up to
-    settings.magic_hour_max_scenes_per_job scenes when MAGIC_HOUR_API_KEY is
-    configured, Ken Burns for the rest) -> crossfade video -> concat audio ->
-    burn phrase-grouped captions -> loudness-normalise (+ optional music
-    ducking) -> H.264 export.
+    Pipeline: per-scene clip (real generative motion for scenes selected by
+    motion_tier when MAGIC_HOUR_API_KEY is configured, Ken Burns for the
+    rest) -> crossfade video -> concat audio -> burn phrase-grouped captions
+    -> loudness-normalise (+ optional music ducking) -> H.264 export.
     """
     if not scenes:
         raise CompositionError(STAGE, "no scenes to compose")
@@ -255,8 +265,9 @@ def compose(
     durations = [s.duration_seconds for s in ordered_scenes]
     has_transitions = len(ordered_scenes) > 1
 
+    motion_budget = _motion_budget_for_tier(motion_tier, len(ordered_scenes))
     motion_positions = (
-        _select_motion_scene_positions(len(ordered_scenes), settings.magic_hour_max_scenes_per_job)
+        _select_motion_scene_positions(len(ordered_scenes), motion_budget)
         if settings.magic_hour_api_key
         else set()
     )

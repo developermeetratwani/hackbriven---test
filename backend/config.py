@@ -35,6 +35,25 @@ class Settings(BaseSettings):
     # other stage.
     magic_hour_max_scenes_per_job: int = 2
 
+    # Razorpay: client-facing credit top-ups. Use a rzp_test_ key first -
+    # test mode charges nothing real and is otherwise identical.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    # One top-up package: pay this many paise (INR x100), receive this many
+    # platform credits. Placeholder pricing - adjust freely, the payment
+    # mechanism doesn't depend on these numbers.
+    razorpay_package_amount_paise: int = 9900  # ₹99
+    razorpay_package_credits: int = 50
+
+    # Credits ledger backing store. When set, backend/core/credits.py uses
+    # this MongoDB instead of a local SQLite file - needed because this
+    # pipeline is designed to deploy on Hugging Face Spaces, whose storage
+    # is typically ephemeral (wiped on redeploy/restart), which would lose
+    # a real paying balance. SQLite remains the fallback for local dev with
+    # no URI configured.
+    mongodb_uri: str = ""
+    mongodb_db_name: str = "citysetu"
+
     storage_dir: str = "storage/jobs"
     target_width: int = 1080
     target_height: int = 1920
@@ -51,6 +70,10 @@ class Settings(BaseSettings):
     @property
     def has_fal(self) -> bool:
         return bool(self.fal_api_key)
+
+    @property
+    def has_razorpay(self) -> bool:
+        return bool(self.razorpay_key_id and self.razorpay_key_secret)
 
 
 settings = Settings()

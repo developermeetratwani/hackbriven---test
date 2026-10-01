@@ -11,6 +11,7 @@ ffmpeg-python>=0.2.0
 static-ffmpeg>=2.7
 python-dotenv>=1.0.0
 gradio>=4.44.0
+pymongo>=4.8.0
 
 pytest>=8.3.0
 pytest-mock>=3.14.0
