@@ -71,6 +71,7 @@ class SceneAssets(BaseModel):
     audio_path: str
     caption_words: list["CaptionWord"] = Field(default_factory=list)
     duration_seconds: float
+    image_prompt: str = ""
 
 
 class CaptionWord(BaseModel):

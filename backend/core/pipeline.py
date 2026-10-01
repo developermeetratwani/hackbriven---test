@@ -54,6 +54,7 @@ def _generate_scene_assets(job_id: str, plan: ScenePlanSet) -> list[SceneAssets]
                 audio_path=str(audio_path),
                 caption_words=caption_words,
                 duration_seconds=actual_duration,
+                image_prompt=scene.image_prompt,
             )
         )
 

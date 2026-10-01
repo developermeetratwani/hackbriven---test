@@ -6,6 +6,7 @@ from pathlib import Path
 from backend.config import settings
 from backend.core.exceptions import CompositionError
 from backend.models.schemas import SceneAssets
+from backend.services import motion_generator
 from backend.utils.ffmpeg_utils import run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,44 @@ def _build_scene_clip(image_path: Path, duration_seconds: float, out_path: Path,
     return out_path
 
 
+def _normalize_clip(raw_path: Path, duration_seconds: float, out_path: Path) -> Path:
+    """Conform an externally-generated clip (Magic Hour) to the exact same
+    contract every Ken Burns clip already has: target resolution (cropped to
+    fill, not stretched), target fps, exact duration, yuv420p. The crossfade
+    chain's duration math depends on every clip being precisely this long -
+    an unconformed clip would silently desync the whole timeline."""
+    width, height = settings.target_width, settings.target_height
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},"
+        f"fps={_FPS},"
+        f"format=yuv420p"
+    )
+    run_ffmpeg(
+        [
+            "-i", str(raw_path),
+            "-t", str(duration_seconds),
+            "-vf", vf,
+            "-an",
+            str(out_path),
+        ],
+        stage=f"{STAGE}.normalize_motion",
+    )
+    return out_path
+
+
+def _build_motion_clip(image_path: Path, prompt: str, duration_seconds: float, out_path: Path) -> Path:
+    """Real generative video via Magic Hour, normalized to this pipeline's
+    clip contract. Raises on any failure - callers must catch and fall back
+    to Ken Burns, since this is a paid/credit-metered external call that can
+    fail for reasons having nothing to do with this pipeline (quota, network,
+    model timeout)."""
+    raw_path = out_path.with_suffix(".raw.mp4")
+    motion_generator.generate_motion_clip(image_path, prompt, duration_seconds, raw_path)
+    _normalize_clip(raw_path, duration_seconds, out_path)
+    return out_path
+
+
 _TRANSITION_DURATION_SECONDS = 0.4
 _TRANSITION_STYLES = ["fade", "wiperight", "circleopen", "slideleft", "diagtl"]
 
@@ -180,6 +219,20 @@ def _crossfade_video(clip_paths: list[Path], durations: list[float], out_path: P
     return out_path
 
 
+def _select_motion_scene_positions(scene_count: int, max_count: int) -> set[int]:
+    """Which scene positions (0-indexed, in ordered_scenes order) should try
+    real generative motion instead of Ken Burns. Opening and closing scenes
+    carry the most visual weight, so they're prioritized first; credits are
+    scarce (free tier: ~120 per 5s clip) so this stays capped rather than
+    applying to every scene."""
+    if max_count <= 0 or scene_count == 0:
+        return set()
+    if scene_count == 1 or max_count == 1:
+        return {0}
+    positions = {0, scene_count - 1}
+    return set(list(positions)[:max_count]) if max_count < len(positions) else positions
+
+
 def compose(
     scenes: list[SceneAssets],
     job_dir: Path,
@@ -188,7 +241,9 @@ def compose(
 ) -> Path:
     """Combine per-scene images + audio + captions into one publish-ready MP4.
 
-    Pipeline: Ken Burns per-scene clip -> crossfade video -> concat audio ->
+    Pipeline: per-scene clip (real generative motion for up to
+    settings.magic_hour_max_scenes_per_job scenes when MAGIC_HOUR_API_KEY is
+    configured, Ken Burns for the rest) -> crossfade video -> concat audio ->
     burn phrase-grouped captions -> loudness-normalise (+ optional music
     ducking) -> H.264 export.
     """
@@ -200,6 +255,12 @@ def compose(
     durations = [s.duration_seconds for s in ordered_scenes]
     has_transitions = len(ordered_scenes) > 1
 
+    motion_positions = (
+        _select_motion_scene_positions(len(ordered_scenes), settings.magic_hour_max_scenes_per_job)
+        if settings.magic_hour_api_key
+        else set()
+    )
+
     scene_clip_paths: list[Path] = []
     for i, scene in enumerate(ordered_scenes):
         clip_path = job_dir / f"scene_{scene.index:02d}_clip.mp4"
@@ -208,7 +269,17 @@ def compose(
         # extra footage to consume instead of cutting the scene short.
         is_last = i == len(ordered_scenes) - 1
         render_duration = scene.duration_seconds if (is_last or not has_transitions) else scene.duration_seconds + _TRANSITION_DURATION_SECONDS
-        _build_scene_clip(Path(scene.image_path), render_duration, clip_path, variant=scene.index)
+
+        made_motion_clip = False
+        if i in motion_positions:
+            try:
+                _build_motion_clip(Path(scene.image_path), scene.image_prompt, render_duration, clip_path)
+                made_motion_clip = True
+            except Exception as exc:  # noqa: BLE001 - any motion failure falls back to Ken Burns
+                logger.warning("scene=%s motion generation failed, falling back to Ken Burns: %s", scene.index, exc)
+
+        if not made_motion_clip:
+            _build_scene_clip(Path(scene.image_path), render_duration, clip_path, variant=scene.index)
         scene_clip_paths.append(clip_path)
 
     silent_video = job_dir / "silent.mp4"

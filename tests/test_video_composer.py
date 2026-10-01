@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from backend.models.schemas import SceneAssets
 from backend.services import video_composer
@@ -185,3 +185,94 @@ def test_compose_raises_on_empty_scenes(tmp_path: Path):
 
     with pytest.raises(CompositionError):
         video_composer.compose([], tmp_path)
+
+
+def test_select_motion_scene_positions_picks_first_and_last():
+    assert video_composer._select_motion_scene_positions(5, max_count=2) == {0, 4}
+
+
+def test_select_motion_scene_positions_respects_max_count_of_one():
+    assert video_composer._select_motion_scene_positions(5, max_count=1) == {0}
+
+
+def test_select_motion_scene_positions_disabled_when_zero():
+    assert video_composer._select_motion_scene_positions(5, max_count=0) == set()
+
+
+def test_select_motion_scene_positions_single_scene():
+    assert video_composer._select_motion_scene_positions(1, max_count=2) == {0}
+
+
+@patch("backend.services.video_composer._build_scene_clip")
+@patch("backend.services.video_composer._build_motion_clip")
+@patch("backend.services.video_composer.settings")
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_compose_uses_motion_for_selected_scenes_when_key_configured(
+    mock_run_ffmpeg, mock_settings, mock_build_motion, mock_build_ken_burns,
+    sample_scene_assets: list[SceneAssets], tmp_path: Path,
+):
+    for asset in sample_scene_assets:
+        Path(asset.audio_path).write_bytes(b"fake")
+        Path(asset.image_path).write_bytes(b"fake")
+
+    mock_settings.target_width = 1080
+    mock_settings.target_height = 1920
+    mock_settings.magic_hour_api_key = "fake-key"
+    mock_settings.magic_hour_max_scenes_per_job = 2
+
+    job_dir = tmp_path / "job"
+    video_composer.compose(sample_scene_assets, job_dir)
+
+    # 2 scenes in the fixture, max_count=2 -> both scenes (0 and 1, i.e.
+    # first-and-last for a 2-scene job) should attempt motion generation.
+    assert mock_build_motion.call_count == 2
+    mock_build_ken_burns.assert_not_called()
+
+
+@patch("backend.services.video_composer._build_scene_clip")
+@patch("backend.services.video_composer._build_motion_clip")
+@patch("backend.services.video_composer.settings")
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_compose_falls_back_to_ken_burns_when_motion_fails(
+    mock_run_ffmpeg, mock_settings, mock_build_motion, mock_build_ken_burns,
+    sample_scene_assets: list[SceneAssets], tmp_path: Path,
+):
+    for asset in sample_scene_assets:
+        Path(asset.audio_path).write_bytes(b"fake")
+        Path(asset.image_path).write_bytes(b"fake")
+
+    mock_settings.target_width = 1080
+    mock_settings.target_height = 1920
+    mock_settings.magic_hour_api_key = "fake-key"
+    mock_settings.magic_hour_max_scenes_per_job = 2
+    mock_build_motion.side_effect = RuntimeError("magic hour quota exhausted")
+
+    job_dir = tmp_path / "job"
+    video_composer.compose(sample_scene_assets, job_dir)
+
+    assert mock_build_motion.call_count == 2
+    assert mock_build_ken_burns.call_count == 2  # every motion attempt failed, Ken Burns covers all
+
+
+@patch("backend.services.video_composer._build_scene_clip")
+@patch("backend.services.video_composer._build_motion_clip")
+@patch("backend.services.video_composer.settings")
+@patch("backend.services.video_composer.run_ffmpeg")
+def test_compose_skips_motion_when_no_key_configured(
+    mock_run_ffmpeg, mock_settings, mock_build_motion, mock_build_ken_burns,
+    sample_scene_assets: list[SceneAssets], tmp_path: Path,
+):
+    for asset in sample_scene_assets:
+        Path(asset.audio_path).write_bytes(b"fake")
+        Path(asset.image_path).write_bytes(b"fake")
+
+    mock_settings.target_width = 1080
+    mock_settings.target_height = 1920
+    mock_settings.magic_hour_api_key = ""
+    mock_settings.magic_hour_max_scenes_per_job = 2
+
+    job_dir = tmp_path / "job"
+    video_composer.compose(sample_scene_assets, job_dir)
+
+    mock_build_motion.assert_not_called()
+    assert mock_build_ken_burns.call_count == 2

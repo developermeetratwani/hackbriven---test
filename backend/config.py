@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     fal_api_key: str = ""
     fal_motion_model: str = "fal-ai/ltx-video"
 
+    magic_hour_api_key: str = ""
+    magic_hour_resolution: str = "480p"
+    # Real generative video is credit-metered (free tier: 400 credits,
+    # ~120/5s clip at 480p) - cap how many scenes per job use it so one
+    # video can't silently burn through the whole balance. Remaining
+    # scenes fall back to Ken Burns, same resilience pattern as every
+    # other stage.
+    magic_hour_max_scenes_per_job: int = 2
+
     storage_dir: str = "storage/jobs"
     target_width: int = 1080
     target_height: int = 1920
