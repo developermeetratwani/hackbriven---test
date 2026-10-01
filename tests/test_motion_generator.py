@@ -8,9 +8,103 @@ import pytest
 from backend.services import motion_generator
 
 
+# --- 8scale ---
+
+
 @patch("backend.services.motion_generator.settings")
 @patch("backend.services.motion_generator.httpx.Client")
-def test_generate_motion_clip_happy_path(mock_client_cls, mock_settings, tmp_path: Path):
+def test_call_eightscale_happy_path(mock_client_cls, mock_settings, tmp_path: Path):
+    mock_settings.eightscale_api_key = "fake-key"
+    mock_settings.eightscale_model = "wan-2.2/14b/image-to-video"
+    mock_settings.eightscale_resolution = "480p"
+    mock_settings.provider_timeout_seconds = 30.0
+
+    submit_response = MagicMock()
+    submit_response.raise_for_status.return_value = None
+    submit_response.json.return_value = {"requestId": "req123", "status": "IN_QUEUE"}
+
+    poll_response = MagicMock()
+    poll_response.raise_for_status.return_value = None
+    poll_response.json.return_value = {
+        "requestId": "req123",
+        "status": "COMPLETED",
+        "output": "https://m.8scale.com/req123/out.mp4",
+    }
+
+    api_client = MagicMock()
+    api_client.post.return_value = submit_response
+    api_client.get.return_value = poll_response
+
+    download_response = MagicMock()
+    download_response.raise_for_status.return_value = None
+    download_response.content = b"FAKE_VIDEO_BYTES"
+    download_client = MagicMock()
+    download_client.get.return_value = download_response
+
+    mock_client_cls.return_value.__enter__.side_effect = [api_client, download_client]
+
+    image_path = tmp_path / "scene.png"
+    image_path.write_bytes(b"fake-image")
+    out_path = tmp_path / "clip.mp4"
+
+    result = motion_generator._call_eightscale(image_path, "gentle motion", 5.0, out_path)
+
+    assert result == out_path
+    assert out_path.read_bytes() == b"FAKE_VIDEO_BYTES"
+    submitted_payload = api_client.post.call_args.kwargs["json"]
+    assert submitted_payload["seconds"] == 5
+    assert submitted_payload["aspect_ratio"] == "9:16"
+    assert submitted_payload["image"].startswith("data:image/png;base64,")
+
+
+@patch("backend.services.motion_generator.settings")
+def test_call_eightscale_raises_without_key(mock_settings, tmp_path: Path):
+    mock_settings.eightscale_api_key = ""
+
+    with pytest.raises(motion_generator.MotionGenerationError, match="not configured"):
+        motion_generator._call_eightscale(tmp_path / "x.png", "prompt", 5.0, tmp_path / "out.mp4")
+
+
+def test_call_eightscale_rounds_duration_to_nearest_allowed_value():
+    assert min(motion_generator._EIGHTSCALE_ALLOWED_SECONDS, key=lambda s: abs(s - 4.0)) in (3, 5)
+    assert min(motion_generator._EIGHTSCALE_ALLOWED_SECONDS, key=lambda s: abs(s - 1.0)) == 3
+    assert min(motion_generator._EIGHTSCALE_ALLOWED_SECONDS, key=lambda s: abs(s - 6.0)) == 5
+
+
+@patch("backend.services.motion_generator.settings")
+@patch("backend.services.motion_generator.httpx.Client")
+def test_call_eightscale_raises_on_failed_status(mock_client_cls, mock_settings, tmp_path: Path):
+    mock_settings.eightscale_api_key = "fake-key"
+    mock_settings.eightscale_model = "wan-2.2/14b/image-to-video"
+    mock_settings.eightscale_resolution = "480p"
+    mock_settings.provider_timeout_seconds = 30.0
+
+    submit_response = MagicMock()
+    submit_response.raise_for_status.return_value = None
+    submit_response.json.return_value = {"requestId": "req123"}
+
+    poll_response = MagicMock()
+    poll_response.raise_for_status.return_value = None
+    poll_response.json.return_value = {"requestId": "req123", "status": "FAILED"}
+
+    client = MagicMock()
+    client.post.return_value = submit_response
+    client.get.return_value = poll_response
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    image_path = tmp_path / "scene.png"
+    image_path.write_bytes(b"fake-image")
+
+    with pytest.raises(motion_generator.MotionGenerationError, match="FAILED"):
+        motion_generator._call_eightscale(image_path, "prompt", 5.0, tmp_path / "out.mp4")
+
+
+# --- Magic Hour ---
+
+
+@patch("backend.services.motion_generator.settings")
+@patch("backend.services.motion_generator.httpx.Client")
+def test_call_magic_hour_happy_path(mock_client_cls, mock_settings, tmp_path: Path):
     mock_settings.magic_hour_api_key = "fake-key"
     mock_settings.magic_hour_resolution = "480p"
     mock_settings.provider_timeout_seconds = 30.0
@@ -52,7 +146,7 @@ def test_generate_motion_clip_happy_path(mock_client_cls, mock_settings, tmp_pat
     image_path.write_bytes(b"fake-image")
     out_path = tmp_path / "clip.mp4"
 
-    result = motion_generator.generate_motion_clip(image_path, "a robot waving", 5.0, out_path)
+    result = motion_generator._call_magic_hour(image_path, "a robot waving", 5.0, out_path)
 
     assert result == out_path
     assert out_path.read_bytes() == b"FAKE_VIDEO_BYTES"
@@ -60,16 +154,16 @@ def test_generate_motion_clip_happy_path(mock_client_cls, mock_settings, tmp_pat
 
 
 @patch("backend.services.motion_generator.settings")
-def test_generate_motion_clip_raises_without_key(mock_settings, tmp_path: Path):
+def test_call_magic_hour_raises_without_key(mock_settings, tmp_path: Path):
     mock_settings.magic_hour_api_key = ""
 
     with pytest.raises(motion_generator.MotionGenerationError, match="not configured"):
-        motion_generator.generate_motion_clip(tmp_path / "x.png", "prompt", 5.0, tmp_path / "out.mp4")
+        motion_generator._call_magic_hour(tmp_path / "x.png", "prompt", 5.0, tmp_path / "out.mp4")
 
 
 @patch("backend.services.motion_generator.time.sleep")
 @patch("backend.services.motion_generator.time.monotonic")
-def test_poll_until_complete_raises_on_error_status(mock_monotonic, mock_sleep):
+def test_magic_hour_poll_raises_on_error_status(mock_monotonic, mock_sleep):
     mock_monotonic.side_effect = [0.0, 1.0]
     client = MagicMock()
     error_response = MagicMock()
@@ -78,14 +172,12 @@ def test_poll_until_complete_raises_on_error_status(mock_monotonic, mock_sleep):
     client.get.return_value = error_response
 
     with pytest.raises(motion_generator.MotionGenerationError, match="model timeout"):
-        motion_generator._poll_until_complete(client, "job123")
+        motion_generator._magic_hour_poll_until_complete(client, "job123")
 
 
 @patch("backend.services.motion_generator.time.sleep")
 @patch("backend.services.motion_generator.time.monotonic")
-def test_poll_until_complete_times_out(mock_monotonic, mock_sleep):
-    # monotonic() is called once per loop condition check; make it exceed
-    # the deadline immediately after the first iteration's work.
+def test_magic_hour_poll_times_out(mock_monotonic, mock_sleep):
     mock_monotonic.side_effect = [0.0, 0.0, 999999.0]
     client = MagicMock()
     rendering_response = MagicMock()
@@ -94,11 +186,10 @@ def test_poll_until_complete_times_out(mock_monotonic, mock_sleep):
     client.get.return_value = rendering_response
 
     with pytest.raises(motion_generator.MotionGenerationError, match="did not complete"):
-        motion_generator._poll_until_complete(client, "job123")
+        motion_generator._magic_hour_poll_until_complete(client, "job123")
 
 
-@patch("backend.services.motion_generator.settings")
-def test_poll_until_complete_raises_when_no_download_url(mock_settings):
+def test_magic_hour_poll_raises_when_no_download_url():
     client = MagicMock()
     complete_response = MagicMock()
     complete_response.raise_for_status.return_value = None
@@ -106,4 +197,46 @@ def test_poll_until_complete_raises_when_no_download_url(mock_settings):
     client.get.return_value = complete_response
 
     with pytest.raises(motion_generator.MotionGenerationError, match="no download url"):
-        motion_generator._poll_until_complete(client, "job123")
+        motion_generator._magic_hour_poll_until_complete(client, "job123")
+
+
+# --- generate_motion_clip orchestration (fallback chain) ---
+
+
+@patch("backend.services.motion_generator._call_magic_hour")
+@patch("backend.services.motion_generator._call_eightscale")
+def test_generate_motion_clip_tries_eightscale_first(mock_eightscale, mock_magic_hour, tmp_path: Path):
+    out_path = tmp_path / "clip.mp4"
+    mock_eightscale.return_value = out_path
+
+    result = motion_generator.generate_motion_clip(tmp_path / "img.png", "prompt", 5.0, out_path)
+
+    assert result == out_path
+    mock_eightscale.assert_called_once()
+    mock_magic_hour.assert_not_called()
+
+
+@patch("backend.services.motion_generator._call_magic_hour")
+@patch("backend.services.motion_generator._call_eightscale")
+def test_generate_motion_clip_falls_back_to_magic_hour(mock_eightscale, mock_magic_hour, tmp_path: Path):
+    out_path = tmp_path / "clip.mp4"
+    mock_eightscale.side_effect = motion_generator.MotionGenerationError("8scale free generations exhausted")
+    mock_magic_hour.return_value = out_path
+
+    result = motion_generator.generate_motion_clip(tmp_path / "img.png", "prompt", 5.0, out_path)
+
+    assert result == out_path
+    mock_eightscale.assert_called_once()
+    mock_magic_hour.assert_called_once()
+
+
+@patch("backend.services.motion_generator._call_magic_hour")
+@patch("backend.services.motion_generator._call_eightscale")
+def test_generate_motion_clip_raises_when_both_providers_fail(mock_eightscale, mock_magic_hour, tmp_path: Path):
+    from backend.core.exceptions import AllProvidersFailedError
+
+    mock_eightscale.side_effect = motion_generator.MotionGenerationError("8scale down")
+    mock_magic_hour.side_effect = motion_generator.MotionGenerationError("magic hour down")
+
+    with pytest.raises(AllProvidersFailedError):
+        motion_generator.generate_motion_clip(tmp_path / "img.png", "prompt", 5.0, tmp_path / "out.mp4")

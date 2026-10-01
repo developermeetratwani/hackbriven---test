@@ -285,6 +285,7 @@ def test_compose_skips_motion_when_no_key_configured(
 
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
+    mock_settings.eightscale_api_key = ""
     mock_settings.magic_hour_api_key = ""
     mock_settings.magic_hour_max_scenes_per_job = 2
 

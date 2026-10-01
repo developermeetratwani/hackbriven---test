@@ -265,10 +265,11 @@ def compose(
     durations = [s.duration_seconds for s in ordered_scenes]
     has_transitions = len(ordered_scenes) > 1
 
+    has_motion_provider = bool(settings.eightscale_api_key or settings.magic_hour_api_key)
     motion_budget = _motion_budget_for_tier(motion_tier, len(ordered_scenes))
     motion_positions = (
         _select_motion_scene_positions(len(ordered_scenes), motion_budget)
-        if settings.magic_hour_api_key
+        if has_motion_provider
         else set()
     )
 

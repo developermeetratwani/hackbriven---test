@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import time
 from pathlib import Path
@@ -7,12 +8,12 @@ from pathlib import Path
 import httpx
 
 from backend.config import settings
+from backend.services.model_router import Provider, call_with_fallback
 
 logger = logging.getLogger(__name__)
 
 STAGE = "composition.motion"
 
-_BASE_URL = "https://api.magichour.ai/v1"
 _POLL_INTERVAL_SECONDS = 5.0
 _POLL_TIMEOUT_SECONDS = 180.0
 
@@ -21,15 +22,85 @@ class MotionGenerationError(RuntimeError):
     pass
 
 
-def _headers() -> dict:
+# --- 8scale.com (Wan 2.2 14B image-to-video) ---
+# Tried first: 10 free generations per key, no card, no upload step needed
+# (accepts the image as a base64 data URI directly in the job payload).
+
+_EIGHTSCALE_BASE = "https://8scale.run"
+_EIGHTSCALE_ALLOWED_SECONDS = (3, 5)
+
+
+def _eightscale_headers() -> dict:
+    return {"Authorization": f"Bearer {settings.eightscale_api_key}", "Content-Type": "application/json"}
+
+
+def _call_eightscale(image_path: Path, prompt: str, duration_seconds: float, out_path: Path) -> Path:
+    if not settings.eightscale_api_key:
+        raise MotionGenerationError("EIGHTSCALE_API_KEY not configured")
+
+    image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    # 8scale only accepts a fixed set of durations, not an arbitrary float -
+    # pick the closest allowed value; video_composer normalizes the result
+    # to the pipeline's exact needed duration afterward regardless.
+    seconds = min(_EIGHTSCALE_ALLOWED_SECONDS, key=lambda s: abs(s - duration_seconds))
+    payload = {
+        "prompt": prompt,
+        "resolution": settings.eightscale_resolution,
+        "aspect_ratio": "9:16",
+        "seconds": seconds,
+        "image": f"data:image/png;base64,{image_b64}",
+    }
+    url = f"{_EIGHTSCALE_BASE}/{settings.eightscale_model}"
+
+    with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
+        response = client.post(url, json=payload, headers=_eightscale_headers())
+        response.raise_for_status()
+        request_id = response.json()["requestId"]
+
+        deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
+        download_url = None
+        while time.monotonic() < deadline:
+            status_response = client.get(f"{_EIGHTSCALE_BASE}/status/{request_id}", headers=_eightscale_headers())
+            status_response.raise_for_status()
+            data = status_response.json()
+            status = data.get("status")
+
+            if status == "COMPLETED":
+                download_url = data.get("output")
+                if not download_url:
+                    raise MotionGenerationError(f"8scale job {request_id} completed with no output url")
+                break
+            if status in ("FAILED", "CANCELLED"):
+                raise MotionGenerationError(f"8scale job {request_id} ended with status {status}")
+
+            time.sleep(_POLL_INTERVAL_SECONDS)
+        else:
+            raise MotionGenerationError(f"8scale job {request_id} did not complete within {_POLL_TIMEOUT_SECONDS}s")
+
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        download_response = client.get(download_url)
+        download_response.raise_for_status()
+        if not download_response.content:
+            raise MotionGenerationError(f"8scale job {request_id} returned an empty video body")
+        out_path.write_bytes(download_response.content)
+
+    return out_path
+
+
+# --- Magic Hour ---
+
+_MAGIC_HOUR_BASE = "https://api.magichour.ai/v1"
+
+
+def _magic_hour_headers() -> dict:
     return {"Authorization": f"Bearer {settings.magic_hour_api_key}", "Content-Type": "application/json"}
 
 
-def _upload_image(client: httpx.Client, image_path: Path) -> str:
+def _magic_hour_upload_image(client: httpx.Client, image_path: Path) -> str:
     response = client.post(
-        f"{_BASE_URL}/files/upload-urls",
+        f"{_MAGIC_HOUR_BASE}/files/upload-urls",
         json={"items": [{"extension": "png", "type": "image"}]},
-        headers=_headers(),
+        headers=_magic_hour_headers(),
     )
     response.raise_for_status()
     item = response.json()["items"][0]
@@ -41,7 +112,7 @@ def _upload_image(client: httpx.Client, image_path: Path) -> str:
     return file_path
 
 
-def _create_job(client: httpx.Client, uploaded_file_path: str, prompt: str, duration_seconds: float) -> str:
+def _magic_hour_create_job(client: httpx.Client, uploaded_file_path: str, prompt: str, duration_seconds: float) -> str:
     end_seconds = max(1, min(60, round(duration_seconds)))
     payload = {
         "end_seconds": end_seconds,
@@ -49,15 +120,15 @@ def _create_job(client: httpx.Client, uploaded_file_path: str, prompt: str, dura
         "style": {"prompt": prompt},
         "assets": {"image_file_path": uploaded_file_path},
     }
-    response = client.post(f"{_BASE_URL}/image-to-video", json=payload, headers=_headers())
+    response = client.post(f"{_MAGIC_HOUR_BASE}/image-to-video", json=payload, headers=_magic_hour_headers())
     response.raise_for_status()
     return response.json()["id"]
 
 
-def _poll_until_complete(client: httpx.Client, job_id: str) -> str:
+def _magic_hour_poll_until_complete(client: httpx.Client, job_id: str) -> str:
     deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        response = client.get(f"{_BASE_URL}/video-projects/{job_id}", headers=_headers())
+        response = client.get(f"{_MAGIC_HOUR_BASE}/video-projects/{job_id}", headers=_magic_hour_headers())
         response.raise_for_status()
         data = response.json()
         status = data.get("status")
@@ -76,20 +147,14 @@ def _poll_until_complete(client: httpx.Client, job_id: str) -> str:
     raise MotionGenerationError(f"magic hour job {job_id} did not complete within {_POLL_TIMEOUT_SECONDS}s")
 
 
-def generate_motion_clip(image_path: Path, prompt: str, duration_seconds: float, out_path: Path) -> Path:
-    """Real generative image-to-video via Magic Hour (credit-metered; see
-    settings.magic_hour_max_scenes_per_job). Returns the raw downloaded clip
-    at whatever resolution/fps Magic Hour produced - callers must normalize
-    it (resolution, fps, exact duration) to match the rest of the pipeline's
-    clips before splicing it into the crossfade timeline.
-    """
+def _call_magic_hour(image_path: Path, prompt: str, duration_seconds: float, out_path: Path) -> Path:
     if not settings.magic_hour_api_key:
         raise MotionGenerationError("MAGIC_HOUR_API_KEY not configured")
 
     with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
-        uploaded_file_path = _upload_image(client, image_path)
-        job_id = _create_job(client, uploaded_file_path, prompt, duration_seconds)
-        download_url = _poll_until_complete(client, job_id)
+        uploaded_file_path = _magic_hour_upload_image(client, image_path)
+        job_id = _magic_hour_create_job(client, uploaded_file_path, prompt, duration_seconds)
+        download_url = _magic_hour_poll_until_complete(client, job_id)
 
     with httpx.Client(timeout=60.0, follow_redirects=True) as client:
         response = client.get(download_url)
@@ -99,3 +164,18 @@ def generate_motion_clip(image_path: Path, prompt: str, duration_seconds: float,
         out_path.write_bytes(response.content)
 
     return out_path
+
+
+def generate_motion_clip(image_path: Path, prompt: str, duration_seconds: float, out_path: Path) -> Path:
+    """Real generative image-to-video, tried across providers in order
+    (8scale first - genuinely free right now; Magic Hour second - its free
+    tier is currently exhausted but may refill). Returns the raw downloaded
+    clip at whatever resolution/fps/duration the provider produced - callers
+    must normalize it to match the rest of the pipeline's clips before
+    splicing it into the crossfade timeline.
+    """
+    providers = [
+        Provider(name="eightscale", call=lambda: _call_eightscale(image_path, prompt, duration_seconds, out_path)),
+        Provider(name="magic_hour", call=lambda: _call_magic_hour(image_path, prompt, duration_seconds, out_path)),
+    ]
+    return call_with_fallback(providers, stage=STAGE)

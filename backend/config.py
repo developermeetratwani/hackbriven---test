@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     fal_api_key: str = ""
     fal_motion_model: str = "fal-ai/ltx-video"
 
+    # 8scale.com (Wan 2.2 14B image-to-video): 10 free generations per key,
+    # no card. Tried first - genuinely free right now, unlike Magic Hour
+    # below, whose 400 free credits were exhausted during development.
+    eightscale_api_key: str = ""
+    eightscale_model: str = "wan-2.2/14b/image-to-video"
+    eightscale_resolution: str = "480p"
+
     magic_hour_api_key: str = ""
     magic_hour_resolution: str = "480p"
     # Real generative video is credit-metered (free tier: 400 credits,
