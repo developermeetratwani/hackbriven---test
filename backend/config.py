@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     mongodb_uri: str = ""
     mongodb_db_name: str = "citysetu"
 
+    # Shared-secret auth for mutating endpoints (create/approve/publish/cancel,
+    # credit top-ups). Empty means auth is disabled - fine for local dev and
+    # the existing test suite, but must be set before any real deployment;
+    # has_auth / require_auth below make that gap visible instead of silent.
+    backend_api_key: str = ""
+
     storage_dir: str = "storage/jobs"
     target_width: int = 1080
     target_height: int = 1920
@@ -88,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def has_razorpay(self) -> bool:
         return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @property
+    def has_auth(self) -> bool:
+        return bool(self.backend_api_key)
 
 
 settings = Settings()

@@ -35,3 +35,14 @@ class JobNotFoundError(Exception):
     def __init__(self, job_id: str) -> None:
         self.job_id = job_id
         super().__init__(f"job not found: {job_id}")
+
+
+class InvalidJobStateError(Exception):
+    """Raised when a lifecycle action (approve/cancel/publish) is attempted
+    on a job that isn't in a state that permits it."""
+
+    def __init__(self, job_id: str, current_status: str, action: str) -> None:
+        self.job_id = job_id
+        self.current_status = current_status
+        self.action = action
+        super().__init__(f"cannot {action} job {job_id}: current status is {current_status}")

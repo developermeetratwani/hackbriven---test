@@ -3,29 +3,26 @@
 An AI-powered content production pipeline for the Qoneqt Global Feed.
 One topic in. A checked, publish-ready vertical video out. Repeatable.
 
-See [`PRD.md`](PRD.md) for the product requirements and phased build plan,
-[`TECH.md`](TECH.md) for architecture/stack details, and [`RULES.md`](RULES.md)
-for the engineering rules this codebase follows.
+See [`PRD.md`](PRD.md) for the original product requirements, [`TECH.md`](TECH.md)
+for architecture/stack details, [`RULES.md`](RULES.md) for the engineering
+rules this codebase follows, and **[`DEPLOYMENT.md`](DEPLOYMENT.md)** for the
+full deployable reference: every environment variable, the complete API
+surface, the provider fallback matrix, architecture decisions against the
+newer IdeaFeed AI PRD, and an explicit list of what's out of scope.
 
 ## Status
 
-Backend (PRD Phases 0–5) is implemented: Intelligence (script + scene planning),
-Generation (images, voice, captions, each with provider fallback chains),
-Composition (ffmpeg/Pillow), Validation (ffprobe quality gate), and a thin
-FastAPI job-orchestration API. The Gradio frontend (Phase 6) and deployment
-scaffolding (Phase 7: Dockerfile, CI, HF Space config) are also in place.
+Full pipeline — Intelligence (script + scene planning, Hindi/English/Hinglish),
+Generation (images, voice, captions, optional real AI motion via
+8Scale/Magic Hour, each with provider fallback chains), Composition
+(cinematic ffmpeg crossfades + Ken Burns + phrase-highlighted captions),
+Validation (ffprobe quality gate), a credits ledger + Razorpay top-ups, a
+job approval/publish lifecycle (approve → publish, publish always resolves
+to an honest Qoneqt manual handoff since no publishing API exists), and a
+Gradio frontend — is implemented and live-tested, not just mocked.
 
-**Verified live end to end, not just mocked**: script generation
-(Gemini → Groq → OpenRouter → local template, in that order — all four
-providers live-tested, including a real Gemini 503 falling through
-correctly), images (NVIDIA-hosted FLUX.1-dev → Pollinations → local
-placeholder, all three live-tested), voice (`edge-tts`, keyless),
-captions (`faster-whisper`, keyless — CPU, word-level timestamps), and
-composition/validation (`ffmpeg`/`ffprobe`, via the `static-ffmpeg` pip
-fallback — no admin rights needed). A full real run (`pipeline.run`, the
-actual code path) reached `DONE` with the quality gate passing. Still
-pending from you: a `FAL_API_KEY` motion-stage integration (not built
-yet, optional — Ken Burns is the default and works).
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) §11 for the exact provider fallback
+chain per stage and §13 for known gaps against the full IdeaFeed AI PRD.
 
 ## Requirements
 
@@ -83,7 +80,10 @@ uvicorn backend.api.main:app --reload
 - `POST /jobs {"topic": "..."}` — create a job, pipeline runs in the background
 - `GET /jobs/{id}` — poll status/progress
 - `GET /jobs/{id}/result` — get the final video path once `status == "done"`
-- `GET /health` — liveness check
+- `GET /health` / `GET /ready` — liveness / readiness checks
+
+Full endpoint reference (approve/publish lifecycle, credits, quality report,
+provider status, analytics) is in [`DEPLOYMENT.md`](DEPLOYMENT.md) §7.
 
 ## Tests
 

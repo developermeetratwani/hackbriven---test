@@ -21,8 +21,14 @@ class JobStatus(str, Enum):
     RUNNING_GENERATION = "running_generation"
     RUNNING_COMPOSITION = "running_composition"
     RUNNING_VALIDATION = "running_validation"
-    DONE = "done"
+    DONE = "done"  # rendered + quality-passed; equivalent to the PRD's "needs_review" - awaits approve()
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    APPROVED = "approved"  # approve() called on a DONE job; only an APPROVED job may publish()
+    PUBLISHING = "publishing"
+    PUBLISHED = "published"
+    PUBLISH_FAILED = "publish_failed"
+    MANUAL_HANDOFF = "manual_handoff"  # no official Qoneqt publishing API exists - never claim PUBLISHED
 
 
 class MotionTier(str, Enum):
@@ -130,6 +136,13 @@ class Job(BaseModel):
     result_path: str | None = None
     error_stage: str | None = None
     error_reason: str | None = None
+    idempotency_key: str | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    published_at: datetime | None = None
+    publish_error: str | None = None
+    manual_handoff_path: str | None = None
+    manual_handoff_note: str | None = None
 
     def touch(self) -> None:
         self.updated_at = _now()

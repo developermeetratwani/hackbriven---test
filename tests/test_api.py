@@ -160,3 +160,160 @@ def test_verify_payment_rejects_bad_signature(mock_verify) -> None:
     )
 
     assert response.status_code == 400
+
+
+# --- Idempotency ---
+
+
+@patch("backend.api.routes.credits.charge")
+@patch("backend.api.routes.run_pipeline")
+def test_create_job_with_same_idempotency_key_returns_same_job(mock_run_pipeline, mock_charge) -> None:
+    mock_charge.return_value = 1
+    client = _client()
+    headers = {"Idempotency-Key": "test-key-123"}
+
+    first = client.post("/jobs", json={"topic": "idempotent topic"}, headers=headers)
+    second = client.post("/jobs", json={"topic": "idempotent topic"}, headers=headers)
+
+    assert first.json()["id"] == second.json()["id"]
+    mock_charge.assert_called_once()
+
+
+# --- Lifecycle: approve / cancel / publish / quality-report ---
+
+
+def _create_done_job(client) -> str:
+    with patch("backend.api.routes.credits.charge", return_value=1), \
+         patch("backend.api.routes.run_pipeline"):
+        job_id = client.post("/jobs", json={"topic": "lifecycle topic"}).json()["id"]
+
+    from backend.api.routes import job_manager
+    from backend.models.schemas import JobStatus
+
+    job_manager.update(job_id, status=JobStatus.DONE, result_path=f"storage/jobs/{job_id}/final.mp4")
+    return job_id
+
+
+def test_approve_rejects_job_not_done() -> None:
+    client = _client()
+    with patch("backend.api.routes.credits.charge", return_value=1), \
+         patch("backend.api.routes.run_pipeline"):
+        job_id = client.post("/jobs", json={"topic": "topic"}).json()["id"]
+
+    response = client.post(f"/jobs/{job_id}/approve", json={"approver": "meet"})
+    assert response.status_code == 409
+
+
+def test_approve_then_publish_produces_manual_handoff(tmp_path) -> None:
+    with patch("backend.config.settings.storage_dir", str(tmp_path)):
+        client = _client()
+        job_id = _create_done_job(client)
+
+        approve_response = client.post(f"/jobs/{job_id}/approve", json={"approver": "meet"})
+        assert approve_response.status_code == 200
+        assert approve_response.json()["status"] == "approved"
+
+        publish_response = client.post(f"/jobs/{job_id}/publish")
+        assert publish_response.status_code == 200
+        body = publish_response.json()
+        assert body["status"] == "manual_handoff"
+        assert body["manual_handoff_path"]
+        assert "NOT automatically published" in body["manual_handoff_note"]
+
+
+def test_publish_rejects_job_not_approved() -> None:
+    client = _client()
+    job_id = _create_done_job(client)
+
+    response = client.post(f"/jobs/{job_id}/publish")
+    assert response.status_code == 409
+
+
+def test_cancel_queued_job() -> None:
+    client = _client()
+    with patch("backend.api.routes.credits.charge", return_value=1), \
+         patch("backend.api.routes.run_pipeline"):
+        job_id = client.post("/jobs", json={"topic": "topic"}).json()["id"]
+
+    response = client.post(f"/jobs/{job_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+def test_cancel_rejects_terminal_job() -> None:
+    client = _client()
+    job_id = _create_done_job(client)
+
+    response = client.post(f"/jobs/{job_id}/cancel")
+    assert response.status_code == 409
+
+
+def test_quality_report_not_available_before_done() -> None:
+    client = _client()
+    with patch("backend.api.routes.credits.charge", return_value=1), \
+         patch("backend.api.routes.run_pipeline"):
+        job_id = client.post("/jobs", json={"topic": "topic"}).json()["id"]
+
+    response = client.get(f"/jobs/{job_id}/quality-report")
+    assert response.status_code == 409
+
+
+# --- Meta endpoints ---
+
+
+def test_providers_status_returns_chains_without_secrets() -> None:
+    client = _client()
+    response = client.get("/providers/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert "script" in body and "chain" in body["script"]
+    assert "voice" in body and body["voice"]["chain"] == ["edge-tts", "gtts"]
+    assert "auth" in body
+    # Never leak raw secret values, only booleans
+    assert all(isinstance(v, bool) for v in body["script"]["configured"].values())
+
+
+def test_analytics_overview_counts_jobs_by_status() -> None:
+    client = _client()
+    with patch("backend.api.routes.credits.charge", return_value=1), \
+         patch("backend.api.routes.run_pipeline"):
+        client.post("/jobs", json={"topic": "a"})
+        client.post("/jobs", json={"topic": "b"})
+
+    response = client.get("/analytics/overview")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_jobs"] >= 2
+    assert "queued" in body["by_status"]
+
+
+def test_ready_endpoint_reports_ffmpeg_check() -> None:
+    client = _client()
+    response = client.get("/ready")
+    assert response.status_code in (200, 503)
+    assert "ffmpeg" in response.json()["checks"]
+
+
+# --- Auth gate ---
+
+
+def test_create_job_requires_auth_when_api_key_configured() -> None:
+    with patch("backend.api.routes.settings") as mock_settings:
+        mock_settings.has_auth = True
+        mock_settings.backend_api_key = "secret123"
+        client = _client()
+        response = client.post("/jobs", json={"topic": "topic"})
+    assert response.status_code == 401
+
+
+@patch("backend.api.routes.credits.charge", return_value=1)
+@patch("backend.api.routes.run_pipeline")
+def test_create_job_succeeds_with_correct_auth_header(mock_run_pipeline, mock_charge) -> None:
+    with patch("backend.api.routes.settings") as mock_settings:
+        mock_settings.has_auth = True
+        mock_settings.backend_api_key = "secret123"
+        client = _client()
+        response = client.post(
+            "/jobs", json={"topic": "topic"}, headers={"Authorization": "Bearer secret123"}
+        )
+    assert response.status_code == 200

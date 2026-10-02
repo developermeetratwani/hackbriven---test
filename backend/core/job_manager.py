@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 
+from datetime import datetime, timezone
+
 from backend.config import settings
 from backend.core.exceptions import JobNotFoundError
 from backend.models.schemas import Job, JobStatus, Language, MotionTier, StageTimestamp
@@ -53,14 +55,74 @@ class JobManager:
             _mongo_collection().replace_one({"_id": job.id}, _to_doc(job), upsert=True)
 
     def create(
-        self, topic: str, *, motion_tier: MotionTier = MotionTier.BALANCED, language: Language = Language.EN
+        self,
+        topic: str,
+        *,
+        motion_tier: MotionTier = MotionTier.BALANCED,
+        language: Language = Language.EN,
+        idempotency_key: str | None = None,
     ) -> Job:
-        job = Job(topic=topic, motion_tier=motion_tier, language=language)
+        if idempotency_key:
+            existing = self.find_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                return existing
+
+        job = Job(topic=topic, motion_tier=motion_tier, language=language, idempotency_key=idempotency_key)
         job.history.append(StageTimestamp(stage="input", status="accepted"))
         with self._lock:
             self._jobs[job.id] = job
             self._persist(job)
         return job
+
+    def find_by_idempotency_key(self, idempotency_key: str) -> Job | None:
+        """Repeated job-creation requests with the same Idempotency-Key must
+        return the original job rather than starting a duplicate run and
+        charging credits twice (PRD 6.6: "avoid duplicate jobs ... using
+        idempotency keys")."""
+        with self._lock:
+            for job in self._jobs.values():
+                if job.idempotency_key == idempotency_key:
+                    return job
+        if _use_mongo():
+            doc = _mongo_collection().find_one({"idempotency_key": idempotency_key})
+            if doc is not None:
+                job = _from_doc(doc)
+                with self._lock:
+                    self._jobs.setdefault(job.id, job)
+                return job
+        return None
+
+    def approve(self, job_id: str, *, approver: str) -> Job:
+        from backend.core.exceptions import InvalidJobStateError
+
+        with self._lock:
+            job = self._get_locked(job_id)
+            if job.status != JobStatus.DONE:
+                raise InvalidJobStateError(job_id, job.status.value, "approve")
+            job.status = JobStatus.APPROVED
+            job.approved_by = approver
+            job.approved_at = datetime.now(timezone.utc)
+            job.history.append(StageTimestamp(stage=JobStatus.APPROVED.value, status=f"approved by {approver}"))
+            job.touch()
+            self._persist(job)
+            return job
+
+    def cancel(self, job_id: str) -> Job:
+        from backend.core.exceptions import InvalidJobStateError
+
+        _TERMINAL = {
+            JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.APPROVED,
+            JobStatus.PUBLISHING, JobStatus.PUBLISHED, JobStatus.PUBLISH_FAILED, JobStatus.MANUAL_HANDOFF,
+        }
+        with self._lock:
+            job = self._get_locked(job_id)
+            if job.status in _TERMINAL:
+                raise InvalidJobStateError(job_id, job.status.value, "cancel")
+            job.status = JobStatus.CANCELLED
+            job.history.append(StageTimestamp(stage=JobStatus.CANCELLED.value, status="cancelled by request"))
+            job.touch()
+            self._persist(job)
+            return job
 
     def get(self, job_id: str) -> Job:
         with self._lock:

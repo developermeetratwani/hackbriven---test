@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.core.exceptions import JobNotFoundError
+from backend.core.exceptions import InvalidJobStateError, JobNotFoundError
 from backend.core.job_manager import JobManager
 from backend.models.schemas import JobStatus
 
@@ -58,6 +58,61 @@ def test_list_returns_all_jobs() -> None:
     manager.create("a")
     manager.create("b")
     assert len(manager.list()) == 2
+
+
+def test_create_with_idempotency_key_returns_existing_job_on_repeat() -> None:
+    manager = JobManager()
+    first = manager.create("topic", idempotency_key="key-1")
+    second = manager.create("a different topic", idempotency_key="key-1")
+
+    assert first.id == second.id
+    assert len(manager.list()) == 1
+
+
+def test_create_without_idempotency_key_always_creates_new_job() -> None:
+    manager = JobManager()
+    first = manager.create("topic")
+    second = manager.create("topic")
+
+    assert first.id != second.id
+
+
+def test_approve_transitions_done_job_to_approved() -> None:
+    manager = JobManager()
+    job = manager.create("topic")
+    manager.update(job.id, status=JobStatus.DONE)
+
+    approved = manager.approve(job.id, approver="meet@example.com")
+
+    assert approved.status == JobStatus.APPROVED
+    assert approved.approved_by == "meet@example.com"
+    assert approved.approved_at is not None
+
+
+def test_approve_rejects_job_not_in_done_state() -> None:
+    manager = JobManager()
+    job = manager.create("topic")  # still QUEUED
+
+    with pytest.raises(InvalidJobStateError):
+        manager.approve(job.id, approver="meet@example.com")
+
+
+def test_cancel_sets_cancelled_status() -> None:
+    manager = JobManager()
+    job = manager.create("topic")
+
+    cancelled = manager.cancel(job.id)
+
+    assert cancelled.status == JobStatus.CANCELLED
+
+
+def test_cancel_rejects_terminal_job() -> None:
+    manager = JobManager()
+    job = manager.create("topic")
+    manager.update(job.id, status=JobStatus.DONE)
+
+    with pytest.raises(InvalidJobStateError):
+        manager.cancel(job.id)
 
 
 # --- MongoDB-backed persistence (used when MONGODB_URI is configured) ---

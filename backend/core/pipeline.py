@@ -72,19 +72,30 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
     job = job_manager.get(job_id)
     resolved_topic = topic or job.topic
 
+    def _cancelled() -> bool:
+        return job_manager.get(job_id).status == JobStatus.CANCELLED
+
     try:
+        if _cancelled():
+            return
         job_manager.set_status(job_id, JobStatus.RUNNING_INTELLIGENCE)
         script = story_engine.generate_script(resolved_topic, language=job.language)
         plan = scene_planner.plan(script)
         job_manager.update(job_id, script=script, scene_plan=plan)
 
+        if _cancelled():
+            return
         job_manager.set_status(job_id, JobStatus.RUNNING_GENERATION)
         assets = _generate_scene_assets(job_id, plan, job.language)
         expected_duration = sum(asset.duration_seconds for asset in assets)
 
+        if _cancelled():
+            return
         job_manager.set_status(job_id, JobStatus.RUNNING_COMPOSITION)
         video_path = video_composer.compose(assets, _job_dir(job_id), motion_tier=job.motion_tier)
 
+        if _cancelled():
+            return
         job_manager.set_status(job_id, JobStatus.RUNNING_VALIDATION)
         report = quality_gate.check(video_path, expected_duration)
 
