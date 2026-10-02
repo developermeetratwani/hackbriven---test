@@ -6,7 +6,7 @@ from pathlib import Path
 from backend.config import settings
 from backend.core.exceptions import PipelineError
 from backend.core.job_manager import JobManager
-from backend.models.schemas import JobStatus, SceneAssets, ScenePlanSet
+from backend.models.schemas import JobStatus, Language, SceneAssets, ScenePlanSet
 from backend.services import (
     caption_generator,
     image_generator,
@@ -27,7 +27,7 @@ def _job_dir(job_id: str) -> Path:
     return path
 
 
-def _generate_scene_assets(job_id: str, plan: ScenePlanSet) -> list[SceneAssets]:
+def _generate_scene_assets(job_id: str, plan: ScenePlanSet, language: Language) -> list[SceneAssets]:
     job_dir = _job_dir(job_id)
     assets: list[SceneAssets] = []
 
@@ -36,8 +36,8 @@ def _generate_scene_assets(job_id: str, plan: ScenePlanSet) -> list[SceneAssets]
         audio_path = job_dir / f"scene_{scene.index:02d}.mp3"
 
         image_generator.generate_image(scene.image_prompt, image_path)
-        voice_generator.synthesize(scene.narration, audio_path)
-        caption_words = caption_generator.transcribe(audio_path)
+        voice_generator.synthesize(scene.narration, audio_path, language=language)
+        caption_words = caption_generator.transcribe(audio_path, language=language)
 
         # The script's duration_seconds is only ever a guess (an LLM or the
         # local template estimating how long narration "should" take to
@@ -74,12 +74,12 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
 
     try:
         job_manager.set_status(job_id, JobStatus.RUNNING_INTELLIGENCE)
-        script = story_engine.generate_script(resolved_topic)
+        script = story_engine.generate_script(resolved_topic, language=job.language)
         plan = scene_planner.plan(script)
         job_manager.update(job_id, script=script, scene_plan=plan)
 
         job_manager.set_status(job_id, JobStatus.RUNNING_GENERATION)
-        assets = _generate_scene_assets(job_id, plan)
+        assets = _generate_scene_assets(job_id, plan, job.language)
         expected_duration = sum(asset.duration_seconds for asset in assets)
 
         job_manager.set_status(job_id, JobStatus.RUNNING_COMPOSITION)

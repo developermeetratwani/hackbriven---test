@@ -10,6 +10,32 @@ import pytest
 from backend.models.schemas import CaptionWord, Scene, SceneAssets, Script
 
 
+@pytest.fixture(autouse=True)
+def _no_real_mongo_by_default(monkeypatch):
+    """Project-wide safety net: .env now carries a real MONGODB_URI for the
+    live app, which backend/core/job_manager.py and backend/core/credits.py
+    both read as a module-level `from backend.config import settings`
+    singleton. Without this, any test that doesn't explicitly mock settings
+    (e.g. tests/test_api.py, which drives the real job_manager singleton
+    through TestClient) would silently hit the live database on every job
+    create/update - confirmed live: it turned an ~80s offline suite into an
+    8+ minute one hitting a real remote cluster repeatedly, and would have
+    been writing test job documents into the real app's data.
+
+    monkeypatch (not @patch) is used so this mutates the real settings
+    singleton's attribute directly and auto-reverts after each test; any
+    test that still wants real-Mongo behavior (e.g. the dedicated
+    _mongo_mode fixtures in test_job_manager.py/test_credits.py) replaces
+    `settings` wholesale with its own mock, which fully shadows this for
+    that test's duration.
+    """
+    import backend.core.credits as credits_module
+    import backend.core.job_manager as job_manager_module
+
+    monkeypatch.setattr(job_manager_module.settings, "mongodb_uri", "")
+    monkeypatch.setattr(credits_module.settings, "mongodb_uri", "")
+
+
 @pytest.fixture
 def sample_script() -> Script:
     return Script(

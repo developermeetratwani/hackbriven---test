@@ -7,7 +7,7 @@ import httpx
 
 from backend.config import settings
 from backend.core.exceptions import InvalidScriptError
-from backend.models.schemas import Script
+from backend.models.schemas import Language, Script
 from backend.services.model_router import Provider, call_with_fallback
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,25 @@ _SYSTEM_PROMPT = (
     "narration is what a voiceover reads aloud; image_prompt describes a single "
     "still image for that scene."
 )
+
+# image_prompt stays English in every language, since it's consumed by an
+# image generator, not read aloud - only hook/narration need translating.
+_LANGUAGE_INSTRUCTIONS = {
+    Language.EN: "Write the hook and all narration in English.",
+    Language.HI: (
+        "Write the hook and all narration entirely in Hindi, using Devanagari "
+        "script (not Latin transliteration). Keep every image_prompt in English."
+    ),
+    Language.HINGLISH: (
+        "Write the hook and all narration in natural Hinglish (Hindi-English "
+        "code-switched, as commonly spoken in urban India), using Latin script "
+        "only - no Devanagari. Keep every image_prompt in English."
+    ),
+}
+
+
+def _build_system_prompt(language: Language) -> str:
+    return f"{_SYSTEM_PROMPT}\n{_LANGUAGE_INSTRUCTIONS[language]}"
 
 
 def _build_user_prompt(topic: str) -> str:
@@ -59,7 +78,7 @@ def _parse_script(topic: str, raw_text: str) -> Script:
         raise InvalidScriptError(STAGE, f"missing required field: {exc}") from exc
 
 
-def _call_gemini(topic: str) -> Script:
+def _call_gemini(topic: str, language: Language) -> Script:
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY not configured")
 
@@ -69,7 +88,7 @@ def _call_gemini(topic: str) -> Script:
     )
     payload = {
         "contents": [{"parts": [{"text": _build_user_prompt(topic)}]}],
-        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": _build_system_prompt(language)}]},
         "generationConfig": {"responseMimeType": "application/json"},
     }
     with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
@@ -81,7 +100,7 @@ def _call_gemini(topic: str) -> Script:
     return _parse_script(topic, raw_text)
 
 
-def _call_groq(topic: str) -> Script:
+def _call_groq(topic: str, language: Language) -> Script:
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY not configured")
 
@@ -90,7 +109,7 @@ def _call_groq(topic: str) -> Script:
     payload = {
         "model": settings.groq_model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _build_system_prompt(language)},
             {"role": "user", "content": _build_user_prompt(topic)},
         ],
         "response_format": {"type": "json_object"},
@@ -104,7 +123,7 @@ def _call_groq(topic: str) -> Script:
     return _parse_script(topic, raw_text)
 
 
-def _call_openrouter(topic: str) -> Script:
+def _call_openrouter(topic: str, language: Language) -> Script:
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY not configured")
 
@@ -113,7 +132,7 @@ def _call_openrouter(topic: str) -> Script:
     payload = {
         "model": settings.openrouter_model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _build_system_prompt(language)},
             {"role": "user", "content": _build_user_prompt(topic)},
         ],
         "response_format": {"type": "json_object"},
@@ -127,16 +146,41 @@ def _call_openrouter(topic: str) -> Script:
     return _parse_script(topic, raw_text)
 
 
-_TEMPLATE_ANGLES = [
-    ("the hook", "Here's something you didn't expect about {topic}.", "a striking establishing shot representing {topic}"),
-    ("context", "{topic} matters more than most people realize.", "an informative wide shot related to {topic}"),
-    ("key point", "The biggest driver behind {topic} is changing fast.", "a close-up illustrating a key detail of {topic}"),
-    ("evidence", "The numbers around {topic} tell their own story.", "a visual metaphor for data or growth tied to {topic}"),
-    ("takeaway", "So here's what {topic} means for you.", "a closing shot that ties {topic} together"),
-]
+# Local template fallback: same five narrative beats, hand-translated per
+# language so the guaranteed last-resort provider keeps its language promise
+# too, not just the real LLM providers.
+_TEMPLATE_ANGLES: dict[Language, list[tuple[str, str, str]]] = {
+    Language.EN: [
+        ("the hook", "Here's something you didn't expect about {topic}.", "a striking establishing shot representing {topic}"),
+        ("context", "{topic} matters more than most people realize.", "an informative wide shot related to {topic}"),
+        ("key point", "The biggest driver behind {topic} is changing fast.", "a close-up illustrating a key detail of {topic}"),
+        ("evidence", "The numbers around {topic} tell their own story.", "a visual metaphor for data or growth tied to {topic}"),
+        ("takeaway", "So here's what {topic} means for you.", "a closing shot that ties {topic} together"),
+    ],
+    Language.HI: [
+        ("the hook", "{topic} के बारे में एक ऐसी बात जो शायद आपने पहले नहीं सुनी होगी।", "a striking establishing shot representing {topic}"),
+        ("context", "{topic} उतना ही महत्वपूर्ण है जितना ज़्यादातर लोग समझते नहीं।", "an informative wide shot related to {topic}"),
+        ("key point", "{topic} के पीछे की सबसे बड़ी वजह तेज़ी से बदल रही है।", "a close-up illustrating a key detail of {topic}"),
+        ("evidence", "{topic} से जुड़े आंकड़े खुद अपनी कहानी बताते हैं।", "a visual metaphor for data or growth tied to {topic}"),
+        ("takeaway", "तो यह है कि {topic} आपके लिए क्या मायने रखता है।", "a closing shot that ties {topic} together"),
+    ],
+    Language.HINGLISH: [
+        ("the hook", "{topic} ke baare mein ek aisi baat jo shaayad aapne pehle nahi suni hogi.", "a striking establishing shot representing {topic}"),
+        ("context", "{topic} utna hi important hai jitna zyada log samajhte nahi.", "an informative wide shot related to {topic}"),
+        ("key point", "{topic} ke peeche ki sabse badi wajah tezi se badal rahi hai.", "a close-up illustrating a key detail of {topic}"),
+        ("evidence", "{topic} se jude numbers khud apni kahani batate hain.", "a visual metaphor for data or growth tied to {topic}"),
+        ("takeaway", "Toh yeh hai ki {topic} aapke liye kya matlab rakhta hai.", "a closing shot that ties {topic} together"),
+    ],
+}
+
+_TEMPLATE_HOOK: dict[Language, str] = {
+    Language.EN: "{topic}. Here's what's really going on.",
+    Language.HI: "{topic}। असल में क्या हो रहा है, यह जानिए।",
+    Language.HINGLISH: "{topic}. Yahi hai jo asal mein ho raha hai.",
+}
 
 
-def _local_template_script(topic: str) -> Script:
+def _local_template_script(topic: str, language: Language) -> Script:
     """Deterministic, offline, no-key script generator.
 
     Last resort in the fallback chain: guarantees the Intelligence stage can
@@ -152,21 +196,21 @@ def _local_template_script(topic: str) -> Script:
             "mood": "neutral",
             "index": i,
         }
-        for i, (_label, narration, image_prompt) in enumerate(_TEMPLATE_ANGLES)
+        for i, (_label, narration, image_prompt) in enumerate(_TEMPLATE_ANGLES[language])
     ]
     return Script(
         topic=topic,
-        hook=f"{topic}. Here's what's really going on.",
+        hook=_TEMPLATE_HOOK[language].format(topic=topic),
         mood="neutral",
         scenes=scenes,
     )
 
 
-def generate_script(topic: str) -> Script:
+def generate_script(topic: str, *, language: Language = Language.EN) -> Script:
     providers = [
-        Provider(name="gemini", call=lambda: _call_gemini(topic)),
-        Provider(name="groq", call=lambda: _call_groq(topic)),
-        Provider(name="openrouter", call=lambda: _call_openrouter(topic)),
-        Provider(name="local_template", call=lambda: _local_template_script(topic)),
+        Provider(name="gemini", call=lambda: _call_gemini(topic, language)),
+        Provider(name="groq", call=lambda: _call_groq(topic, language)),
+        Provider(name="openrouter", call=lambda: _call_openrouter(topic, language)),
+        Provider(name="local_template", call=lambda: _local_template_script(topic, language)),
     ]
     return call_with_fallback(providers, stage=STAGE)

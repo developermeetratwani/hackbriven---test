@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from backend.core import pipeline
 from backend.core.job_manager import JobManager
-from backend.models.schemas import CaptionWord, JobStatus, QualityReport, Script
+from backend.models.schemas import CaptionWord, JobStatus, Language, QualityReport, Script
 from backend.services import scene_planner
 
 
@@ -74,7 +74,7 @@ def test_generate_scene_assets_uses_actual_audio_duration_not_script_guess(tmp_p
         mock_settings.storage_path = tmp_path
         plan = scene_planner.plan(sample_script)
 
-        assets = pipeline._generate_scene_assets("job123", plan)
+        assets = pipeline._generate_scene_assets("job123", plan, Language.EN)
 
     assert mock_get_duration.call_count == len(sample_script.scenes)
     assert all(asset.duration_seconds == 9.75 for asset in assets)

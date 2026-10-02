@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-flash-latest"
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
+    groq_whisper_model: str = "whisper-large-v3-turbo"
 
     openrouter_api_key: str = ""
     openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
@@ -19,9 +20,15 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     nvidia_image_model: str = "black-forest-labs/flux.1-dev"
 
+    # Live-verified against the real edge-tts voice catalog (listed, not
+    # guessed): hi-IN voices expect Devanagari script; en-IN reads Latin-
+    # script Hinglish with an Indian accent, which is what Hinglish actually
+    # needs (a hi-IN voice fed Latin-script text mispronounces badly).
     edge_tts_voice: str = "en-US-AriaNeural"
+    edge_tts_voice_hi: str = "hi-IN-SwaraNeural"
+    edge_tts_voice_hinglish: str = "en-IN-NeerjaNeural"
 
-    whisper_model: str = "base"
+    whisper_model: str = "base"  # local faster-whisper fallback
 
     fal_api_key: str = ""
     fal_motion_model: str = "fal-ai/ltx-video"

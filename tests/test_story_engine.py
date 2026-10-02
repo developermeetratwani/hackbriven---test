@@ -117,9 +117,29 @@ def test_generate_script_falls_back_to_local_template_with_no_keys(mock_settings
 
 
 def test_local_template_script_is_deterministic():
-    first = story_engine._local_template_script("Why EVs are popular")
-    second = story_engine._local_template_script("Why EVs are popular")
+    from backend.models.schemas import Language
+
+    first = story_engine._local_template_script("Why EVs are popular", Language.EN)
+    second = story_engine._local_template_script("Why EVs are popular", Language.EN)
     assert first == second
+
+
+def test_local_template_script_hindi():
+    from backend.models.schemas import Language
+
+    script = story_engine._local_template_script("Why EVs are popular", Language.HI)
+    assert "Why EVs are popular" in script.hook  # topic substituted, rest is Devanagari
+    assert any(ord(c) > 0x0900 for c in script.hook)  # contains Devanagari characters
+    assert len(script.scenes) == 5
+
+
+def test_local_template_script_hinglish():
+    from backend.models.schemas import Language
+
+    script = story_engine._local_template_script("Why EVs are popular", Language.HINGLISH)
+    assert "Why EVs are popular" in script.hook
+    assert "asal mein" in script.hook.lower()
+    assert len(script.scenes) == 5
 
 
 def test_parse_script_rejects_invalid_json():

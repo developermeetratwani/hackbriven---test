@@ -10,7 +10,7 @@ from backend.core.credits import InsufficientCreditsError
 from backend.core.exceptions import JobNotFoundError
 from backend.core.job_manager import JobManager
 from backend.core.pipeline import run as run_pipeline
-from backend.models.schemas import Job, MotionTier
+from backend.models.schemas import Job, Language, MotionTier
 from backend.services import payments
 from backend.services.payments import PaymentError, SignatureVerificationError
 
@@ -22,6 +22,7 @@ job_manager = JobManager()
 class CreateJobRequest(BaseModel):
     topic: str
     motion_tier: MotionTier = MotionTier.BALANCED
+    language: Language = Language.EN
 
 
 @router.post("", response_model=Job)
@@ -43,7 +44,7 @@ def create_job(request: CreateJobRequest, background_tasks: BackgroundTasks) -> 
             },
         ) from exc
 
-    job = job_manager.create(topic, motion_tier=request.motion_tier)
+    job = job_manager.create(topic, motion_tier=request.motion_tier, language=request.language)
     background_tasks.add_task(run_pipeline, job.id, job_manager)
     return job
 

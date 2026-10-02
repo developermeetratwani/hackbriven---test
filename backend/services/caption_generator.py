@@ -4,10 +4,11 @@ import logging
 import subprocess
 from pathlib import Path
 
+import httpx
 import numpy as np
 
 from backend.config import settings
-from backend.models.schemas import CaptionWord
+from backend.models.schemas import CaptionWord, Language
 from backend.services.model_router import Provider, call_with_fallback
 from backend.utils.ffmpeg_utils import ffmpeg_path
 
@@ -18,6 +19,60 @@ STAGE = "generation.captions"
 _WHISPER_SAMPLE_RATE = 16000
 
 _model_cache: dict[str, object] = {}
+
+
+# --- Groq-hosted Whisper (tried first: cloud GPU, faster and more accurate
+# than the local CPU model below, free tier, no new key - reuses GROQ_API_KEY) ---
+
+
+_WHISPER_LANGUAGE_CODE = {
+    # Hindi audio is Devanagari-script hi-IN speech - giving Whisper an
+    # explicit language hint noticeably improves accuracy over auto-detect.
+    # English and Hinglish audio are both Latin-script, English-family
+    # voices (en-US/en-IN), so "en" is correct for both and also skips the
+    # auto-detect pass (a small speed win, not just accuracy).
+    Language.EN: "en",
+    Language.HI: "hi",
+    Language.HINGLISH: "en",
+}
+
+
+def _call_groq_whisper(audio_path: Path, language: Language = Language.EN) -> list[CaptionWord]:
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY not configured")
+
+    with open(audio_path, "rb") as f:
+        files = {"file": (audio_path.name, f, "audio/mpeg")}
+        data = {
+            "model": settings.groq_whisper_model,
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": "word",
+            "language": _WHISPER_LANGUAGE_CODE[language],
+        }
+        headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+        with httpx.Client(timeout=settings.provider_timeout_seconds) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                files=files, data=data, headers=headers,
+            )
+    response.raise_for_status()
+    body = response.json()
+
+    words: list[CaptionWord] = []
+    for word in body.get("words") or []:
+        token = str(word.get("word", "")).strip()
+        if not token:
+            continue
+        words.append(
+            CaptionWord(word=token, start_seconds=float(word["start"]), end_seconds=float(word["end"]))
+        )
+
+    if not words:
+        raise RuntimeError("groq whisper produced no word-level timestamps")
+    return words
+
+
+# --- Local faster-whisper (fallback: no network dependency, keyless) ---
 
 
 def _load_model():
@@ -53,10 +108,10 @@ def _decode_audio(audio_path: Path) -> np.ndarray:
     return np.frombuffer(result.stdout, dtype=np.float32)
 
 
-def _call_whisper(audio_path: Path) -> list[CaptionWord]:
+def _call_local_whisper(audio_path: Path, language: Language = Language.EN) -> list[CaptionWord]:
     model = _load_model()
     audio = _decode_audio(audio_path)
-    segments, _info = model.transcribe(audio, word_timestamps=True)
+    segments, _info = model.transcribe(audio, word_timestamps=True, language=_WHISPER_LANGUAGE_CODE[language])
 
     words: list[CaptionWord] = []
     for segment in segments:
@@ -73,12 +128,13 @@ def _call_whisper(audio_path: Path) -> list[CaptionWord]:
             )
 
     if not words:
-        raise RuntimeError("whisper produced no word-level timestamps")
+        raise RuntimeError("local whisper produced no word-level timestamps")
     return words
 
 
-def transcribe(audio_path: Path) -> list[CaptionWord]:
+def transcribe(audio_path: Path, *, language: Language = Language.EN) -> list[CaptionWord]:
     providers = [
-        Provider(name="whisper", call=lambda: _call_whisper(audio_path)),
+        Provider(name="groq_whisper", call=lambda: _call_groq_whisper(audio_path, language)),
+        Provider(name="local_whisper", call=lambda: _call_local_whisper(audio_path, language)),
     ]
     return call_with_fallback(providers, stage=STAGE)

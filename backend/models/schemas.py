@@ -34,6 +34,17 @@ class MotionTier(str, Enum):
     BASIC = "basic"  # Ken Burns only, zero credits spent
 
 
+class Language(str, Enum):
+    """Script + narration language. Changes both what the LLM is asked to
+    write and which edge-tts voice reads it - feeding English TTS a
+    Devanagari script (or vice versa) mispronounces badly, so these two
+    must always move together, not be picked independently."""
+
+    EN = "en"
+    HI = "hi"  # Hindi, Devanagari script
+    HINGLISH = "hinglish"  # Hindi-English code-switched, Latin script
+
+
 class Scene(BaseModel):
     index: int
     narration: str
@@ -107,6 +118,7 @@ class StageTimestamp(BaseModel):
 class Job(BaseModel):
     id: str = Field(default_factory=_job_id)
     topic: str
+    language: Language = Language.EN
     motion_tier: MotionTier = MotionTier.BALANCED
     status: JobStatus = JobStatus.QUEUED
     created_at: datetime = Field(default_factory=_now)
