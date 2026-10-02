@@ -10,6 +10,7 @@ from backend.models.schemas import JobStatus, Language, SceneAssets, ScenePlanSe
 from backend.services import (
     caption_generator,
     image_generator,
+    music_generator,
     quality_gate,
     scene_planner,
     story_engine,
@@ -92,7 +93,16 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
         if _cancelled():
             return
         job_manager.set_status(job_id, JobStatus.RUNNING_COMPOSITION)
-        video_path = video_composer.compose(assets, _job_dir(job_id), motion_tier=job.motion_tier)
+        music_path = None
+        try:
+            music_path = music_generator.generate_ambient_bed(
+                script.mood, expected_duration, _job_dir(job_id) / "music.wav"
+            )
+        except Exception as exc:  # noqa: BLE001 - background music is optional, never fail the job for it
+            logger.warning("job=%s background music generation failed, continuing without it: %s", job_id, exc)
+        video_path = video_composer.compose(
+            assets, _job_dir(job_id), music_path=music_path, motion_tier=job.motion_tier
+        )
 
         if _cancelled():
             return
@@ -106,7 +116,9 @@ def run(job_id: str, job_manager: JobManager, *, topic: str | None = None) -> No
                 "job=%s quality gate failed (attempt %s): %s",
                 job_id, attempts, report.reasons,
             )
-            video_path = video_composer.compose(assets, _job_dir(job_id), motion_tier=job.motion_tier)
+            video_path = video_composer.compose(
+                assets, _job_dir(job_id), music_path=music_path, motion_tier=job.motion_tier
+            )
             report = quality_gate.check(video_path, expected_duration)
 
         job_manager.update(job_id, quality_report=report)

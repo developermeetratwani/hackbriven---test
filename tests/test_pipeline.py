@@ -19,12 +19,15 @@ def test_pipeline_runs_to_done(tmp_path: Path, sample_script: Script):
          patch("backend.core.pipeline.voice_generator.synthesize") as mock_voice, \
          patch("backend.core.pipeline.caption_generator.transcribe", return_value=[CaptionWord(word="hi", start_seconds=0, end_seconds=0.3)]), \
          patch("backend.core.pipeline.get_duration_seconds", return_value=4.0), \
+         patch("backend.core.pipeline.music_generator.generate_ambient_bed") as mock_music, \
          patch("backend.core.pipeline.video_composer.compose") as mock_compose, \
          patch("backend.core.pipeline.quality_gate.check") as mock_check:
 
         mock_settings.storage_path = tmp_path
         mock_settings.max_regenerate_attempts = 2
         final_video = tmp_path / job.id / "final.mp4"
+        music_path = tmp_path / job.id / "music.wav"
+        mock_music.return_value = music_path
         mock_compose.return_value = final_video
         mock_check.return_value = QualityReport(passed=True, width=1080, height=1920, duration_seconds=12.5, has_audio_track=True)
 
@@ -35,6 +38,34 @@ def test_pipeline_runs_to_done(tmp_path: Path, sample_script: Script):
     assert updated.result_path == str(final_video)
     assert updated.quality_report is not None and updated.quality_report.passed
     assert mock_image.call_count == 3  # one per scene in sample_script
+    mock_music.assert_called_once()
+    assert mock_compose.call_args.kwargs["music_path"] == music_path
+
+
+def test_pipeline_continues_without_music_when_generation_fails(tmp_path: Path, sample_script: Script):
+    manager = JobManager()
+    job = manager.create(sample_script.topic)
+
+    with patch("backend.core.pipeline.settings") as mock_settings, \
+         patch("backend.core.pipeline.story_engine.generate_script", return_value=sample_script), \
+         patch("backend.core.pipeline.image_generator.generate_image"), \
+         patch("backend.core.pipeline.voice_generator.synthesize"), \
+         patch("backend.core.pipeline.caption_generator.transcribe", return_value=[]), \
+         patch("backend.core.pipeline.get_duration_seconds", return_value=4.0), \
+         patch("backend.core.pipeline.music_generator.generate_ambient_bed", side_effect=RuntimeError("ffmpeg lavfi unavailable")), \
+         patch("backend.core.pipeline.video_composer.compose") as mock_compose, \
+         patch("backend.core.pipeline.quality_gate.check") as mock_check:
+
+        mock_settings.storage_path = tmp_path
+        mock_settings.max_regenerate_attempts = 2
+        mock_compose.return_value = tmp_path / job.id / "final.mp4"
+        mock_check.return_value = QualityReport(passed=True, width=1080, height=1920, duration_seconds=12.5, has_audio_track=True)
+
+        pipeline.run(job.id, manager)
+
+    updated = manager.get(job.id)
+    assert updated.status == JobStatus.DONE  # music failure must not fail the job
+    assert mock_compose.call_args.kwargs["music_path"] is None
 
 
 def test_pipeline_retries_on_quality_gate_failure_then_fails(tmp_path: Path, sample_script: Script):
@@ -47,6 +78,7 @@ def test_pipeline_retries_on_quality_gate_failure_then_fails(tmp_path: Path, sam
          patch("backend.core.pipeline.voice_generator.synthesize"), \
          patch("backend.core.pipeline.caption_generator.transcribe", return_value=[]), \
          patch("backend.core.pipeline.get_duration_seconds", return_value=4.0), \
+         patch("backend.core.pipeline.music_generator.generate_ambient_bed"), \
          patch("backend.core.pipeline.video_composer.compose") as mock_compose, \
          patch("backend.core.pipeline.quality_gate.check") as mock_check:
 

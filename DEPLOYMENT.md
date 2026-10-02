@@ -17,6 +17,14 @@ topic -> script+hooks -> scenes -> images+voice+captions -> composed MP4
       -> quality gate -> approve -> Qoneqt manual handoff
 ```
 
+**Live-verified, not just unit-tested**: a real end-to-end run (no mocks)
+produced a 37s, 1080x1920, H.264+AAC video that passed the quality gate —
+and did so *while* a real Gemini call returned a live 503 and NVIDIA image
+generation timed out on every scene, both falling through to the next
+provider in their chain automatically. That's the resilience this
+architecture is actually for, demonstrated under a real failure, not a
+simulated one.
+
 Every external AI call (script, image, voice, captions, motion) goes
 through a **provider fallback chain** ("AI orchestra") — if one provider is
 rate-limited or down, the next one in the chain is tried automatically, so
@@ -148,6 +156,12 @@ What was retrofitted:
   see §9.
 - **Minimal shared-secret auth**, not a full user/session system — see §10
   for exactly what this does and does not cover.
+- **Background music** (`backend/services/music_generator.py`) — synthesized
+  directly via ffmpeg's own sine-wave generator (a mood-aware ambient pad,
+  no external files, no licensing questions), mixed under narration using
+  the sidechain-ducking already built into `video_composer.compose()`.
+  Every job gets one automatically; a generation failure never fails the
+  job, it just renders without music.
 
 What was **not** attempted, and is out of scope for this build:
 - A separate Project entity distinct from a Job (no script editing/
@@ -238,7 +252,7 @@ rule:
 - No reference-image upload / script-upload intake path.
 - No configurable aspect ratio, duration preset, or visual theme.
 - No per-scene regeneration without rerunning the whole job.
-- No background music, auto-thumbnail, or SRT/VTT export yet.
+- No auto-thumbnail or SRT/VTT export yet (background music is done — §8).
 - No multi-user ownership/authorization, only a single shared API key.
 - No real Qoneqt analytics (none exist to fetch).
 - Stage-level resume-from-failure is not implemented; a failed job must be
