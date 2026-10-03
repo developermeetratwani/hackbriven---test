@@ -74,6 +74,14 @@ create a Gradio-SDK Space, push this repo, set whichever secrets you have
 under **Settings → Repository secrets**, done. Free Spaces sleep when idle
 — wake one before a live demo.
 
+## 5b. Render (uses the same Dockerfile)
+
+See `deploy/render/README.md`. Short version: new Web Service, connect this
+repo, Render auto-builds the root `Dockerfile` — no extra files needed.
+`app.py` reads Render's `$PORT` env var for the Gradio UI (falls back to
+7860 for HF Spaces / local Docker runs where `PORT` isn't set), so the same
+codebase deploys to either platform unmodified.
+
 ---
 
 ## 6. Environment variables

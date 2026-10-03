@@ -1,9 +1,10 @@
-"""Hugging Face Space entrypoint: bundles the FastAPI backend and the Gradio
-frontend into one process, since a free Space only runs a single app.
+"""Single-process entrypoint for a platform that only runs one app per
+service: Hugging Face Spaces (Gradio SDK) or Render (Docker Web Service).
 
 Runs uvicorn (backend.api.main:app) on a background thread, points the
 Gradio frontend at it via API_BASE_URL, then launches the Gradio UI in the
-foreground, which is what the Space's health check expects.
+foreground on $PORT (Render sets this; HF Spaces and local dev default to
+7860) - the platform's health check/reverse proxy expects a response there.
 """
 
 from __future__ import annotations
@@ -44,4 +45,5 @@ if __name__ == "__main__":
 
     from frontend.app import demo
 
-    demo.queue().launch(server_name="0.0.0.0")
+    public_port = int(os.environ.get("PORT", "7860"))
+    demo.queue().launch(server_name="0.0.0.0", server_port=public_port)
