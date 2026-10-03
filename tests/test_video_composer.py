@@ -234,7 +234,8 @@ def test_compose_uses_motion_for_selected_scenes_when_key_configured(
 
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
-    mock_settings.magic_hour_api_key = "fake-key"
+    mock_settings.eightscale_key_pool = []
+    mock_settings.magic_hour_key_pool = ["fake-key"]
     mock_settings.magic_hour_max_scenes_per_job = 2
 
     job_dir = tmp_path / "job"
@@ -260,7 +261,8 @@ def test_compose_falls_back_to_ken_burns_when_motion_fails(
 
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
-    mock_settings.magic_hour_api_key = "fake-key"
+    mock_settings.eightscale_key_pool = []
+    mock_settings.magic_hour_key_pool = ["fake-key"]
     mock_settings.magic_hour_max_scenes_per_job = 2
     mock_build_motion.side_effect = RuntimeError("magic hour quota exhausted")
 
@@ -285,8 +287,8 @@ def test_compose_skips_motion_when_no_key_configured(
 
     mock_settings.target_width = 1080
     mock_settings.target_height = 1920
-    mock_settings.eightscale_api_key = ""
-    mock_settings.magic_hour_api_key = ""
+    mock_settings.eightscale_key_pool = []
+    mock_settings.magic_hour_key_pool = []
     mock_settings.magic_hour_max_scenes_per_job = 2
 
     job_dir = tmp_path / "job"

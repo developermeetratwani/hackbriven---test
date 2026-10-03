@@ -5,6 +5,16 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _parse_key_pool(plural_csv: str, singular: str) -> list[str]:
+    """Comma-separated multi-account key pool, falling back to the single
+    legacy key field when no pool is configured. Blank entries (trailing
+    commas, accidental double commas) are dropped."""
+    keys = [k.strip() for k in plural_csv.split(",") if k.strip()] if plural_csv else []
+    if not keys and singular:
+        keys = [singular]
+    return keys
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -36,11 +46,19 @@ class Settings(BaseSettings):
     # 8scale.com (Wan 2.2 14B image-to-video): 10 free generations per key,
     # no card. Tried first - genuinely free right now, unlike Magic Hour
     # below, whose 400 free credits were exhausted during development.
+    # EIGHTSCALE_API_KEYS (comma-separated) is a pool of keys from multiple
+    # free accounts - each account's free quota is small, so generate_
+    # motion_clip() rotates through the whole pool before falling through
+    # to Magic Hour, multiplying the effective free capacity instead of
+    # stopping the moment one account's quota is spent. EIGHTSCALE_API_KEY
+    # (singular) still works as a one-key pool for backward compatibility.
     eightscale_api_key: str = ""
+    eightscale_api_keys: str = ""
     eightscale_model: str = "wan-2.2/14b/image-to-video"
     eightscale_resolution: str = "480p"
 
     magic_hour_api_key: str = ""
+    magic_hour_api_keys: str = ""  # same pooling pattern as eightscale_api_keys above
     magic_hour_resolution: str = "480p"
     # Real generative video is credit-metered (free tier: 400 credits,
     # ~120/5s clip at 480p) - cap how many scenes per job use it so one
@@ -98,6 +116,14 @@ class Settings(BaseSettings):
     @property
     def has_auth(self) -> bool:
         return bool(self.backend_api_key)
+
+    @property
+    def eightscale_key_pool(self) -> list[str]:
+        return _parse_key_pool(self.eightscale_api_keys, self.eightscale_api_key)
+
+    @property
+    def magic_hour_key_pool(self) -> list[str]:
+        return _parse_key_pool(self.magic_hour_api_keys, self.magic_hour_api_key)
 
 
 settings = Settings()

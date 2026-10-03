@@ -19,6 +19,7 @@ from backend.services.payments import PaymentError, SignatureVerificationError
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
 meta_router = APIRouter(tags=["meta"])
+auth_router = APIRouter(prefix="/auth", tags=["auth"])
 job_manager = JobManager()
 
 
@@ -34,6 +35,25 @@ def require_auth(authorization: str | None = Header(default=None)) -> None:
     expected = f"Bearer {settings.backend_api_key}"
     if authorization != expected:
         raise HTTPException(status_code=401, detail="missing or invalid Authorization header")
+
+
+class LoginRequest(BaseModel):
+    api_key: str = ""
+
+
+@auth_router.post("/login")
+def login(request: LoginRequest) -> dict:
+    """Lets a frontend give immediate login feedback instead of discovering
+    an invalid key only on the first job-creation attempt. This checks the
+    same BACKEND_API_KEY require_auth() checks - it doesn't issue a session
+    token, the frontend just holds onto the key client-side and resends it
+    as the Authorization header on every mutating call, same as any other
+    caller of this API."""
+    if not settings.has_auth:
+        return {"authenticated": True, "auth_required": False}
+    if request.api_key == settings.backend_api_key:
+        return {"authenticated": True, "auth_required": True}
+    raise HTTPException(status_code=401, detail="invalid API key")
 
 
 class CreateJobRequest(BaseModel):
@@ -259,9 +279,13 @@ def providers_status() -> dict:
         "motion": {
             "chain": ["eightscale", "magic_hour", "ken_burns"],
             "configured": {
-                "eightscale": bool(settings.eightscale_api_key),
-                "magic_hour": bool(settings.magic_hour_api_key),
+                "eightscale": bool(settings.eightscale_key_pool),
+                "magic_hour": bool(settings.magic_hour_key_pool),
                 "ken_burns": True,
+            },
+            "key_pool_size": {
+                "eightscale": len(settings.eightscale_key_pool),
+                "magic_hour": len(settings.magic_hour_key_pool),
             },
         },
         "payments": {"razorpay_configured": settings.has_razorpay},

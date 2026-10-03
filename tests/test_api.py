@@ -317,3 +317,34 @@ def test_create_job_succeeds_with_correct_auth_header(mock_run_pipeline, mock_ch
             "/jobs", json={"topic": "topic"}, headers={"Authorization": "Bearer secret123"}
         )
     assert response.status_code == 200
+
+
+# --- Login ---
+
+
+def test_login_succeeds_when_auth_disabled() -> None:
+    with patch("backend.api.routes.settings") as mock_settings:
+        mock_settings.has_auth = False
+        client = _client()
+        response = client.post("/auth/login", json={"api_key": ""})
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True, "auth_required": False}
+
+
+def test_login_succeeds_with_correct_key() -> None:
+    with patch("backend.api.routes.settings") as mock_settings:
+        mock_settings.has_auth = True
+        mock_settings.backend_api_key = "secret123"
+        client = _client()
+        response = client.post("/auth/login", json={"api_key": "secret123"})
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": True, "auth_required": True}
+
+
+def test_login_rejects_wrong_key() -> None:
+    with patch("backend.api.routes.settings") as mock_settings:
+        mock_settings.has_auth = True
+        mock_settings.backend_api_key = "secret123"
+        client = _client()
+        response = client.post("/auth/login", json={"api_key": "wrong"})
+    assert response.status_code == 401
